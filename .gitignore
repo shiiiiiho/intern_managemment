@@ -1,0 +1,14 @@
+# Node/npm
+node_modules/
+
+# Env
+.env
+
+# Test artifacts
+coverage/
+playwright-report/
+playwright/.cache/
+test-results/
+
+# OS artifacts
+.DS_Store

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ログイン</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+        }
+        #login-container {
+            background-color: #fff;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 100%;
+            max-width: 400px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 24px;
+        }
+        input[type="email"] {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #a0c8f0;
+            cursor: not-allowed;
+        }
+        #error-message {
+            color: #dc3545;
+            margin-top: 15px;
+            font-weight: bold;
+            height: 20px; /* Prevent layout shift */
+        }
+    </style>
+</head>
+<body>
+    <div id="login-container">
+        <h1>シフト管理システム</h1>
+        <p style="margin-bottom: 24px; color:#555;">ユーザーマスタから氏名と権限を選択してログインしてください。</p>
+        <form id="login-form">
+            <label for="user-select" style="display:block; text-align:left; margin-bottom:6px;">氏名・権限</label>
+            <select id="user-select" required>
+                <option value="">選択してください</option>
+            </select>
+            <button type="submit" id="login-button">ログイン</button>
+        </form>
+        <div id="error-message"></div>
+    </div>
+
+    <script>
+        const renderUsers = (users) => {
+            const select = document.getElementById('user-select');
+            users.forEach(user => {
+                const option = document.createElement('option');
+                option.value = user.identifier;
+                option.innerText = `${user.name} (${user.role || '権限なし'})`;
+                select.appendChild(option);
+            });
+        };
+
+        const showLoginError = (message) => {
+            const errorMessage = document.getElementById('error-message');
+            errorMessage.innerText = message;
+        };
+
+        const initUserList = () => {
+            google.script.run
+                .withSuccessHandler(renderUsers)
+                .withFailureHandler(error => {
+                    showLoginError('ユーザー一覧の読み込みに失敗しました。管理者に連絡してください。');
+                    console.error('getUsersForLogin error', error);
+                })
+                .getUsersForLogin();
+        };
+
+        document.addEventListener('DOMContentLoaded', initUserList);
+
+        document.getElementById('login-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const select = document.getElementById('user-select');
+            const identifier = select.value;
+            const loginButton = document.getElementById('login-button');
+            const errorMessage = document.getElementById('error-message');
+
+            loginButton.disabled = true;
+            loginButton.innerText = 'ログイン中...';
+            errorMessage.innerText = '';
+
+            google.script.run
+                .withSuccessHandler(function(redirectUrl) {
+                    // 認証成功、メインアプリにリダイレクト
+                    window.top.location.href = redirectUrl;
+                })
+                .withFailureHandler(function(error) {
+                    errorMessage.innerText = error.message;
+                    loginButton.disabled = false;
+                    loginButton.innerText = 'ログイン';
+                })
+                .authenticateUser(identifier);
+        });
+    </script>
+</body>
+</html>

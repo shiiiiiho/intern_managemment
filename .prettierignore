@@ -1,0 +1,9 @@
+node_modules/
+archive/
+backups/
+logs/
+coverage/
+playwright-report/
+*.min.js
+*.min.css
+package-lock.json

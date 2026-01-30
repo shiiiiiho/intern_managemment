@@ -1,0 +1,67 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read files",
+      "Edit files",
+      "Write files",
+      "Bash(npm run *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+      "Bash(docker compose *)",
+      "Bash(docker exec *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
+      "Bash(git stash *)",
+      "Bash(curl *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(mkdir *)",
+      "Bash(rm *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(which *)",
+      "Bash(echo *)",
+      "Bash(pwd)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(touch *)",
+      "Bash(chmod *)",
+      "Bash(brew *)",
+      "Bash(skaffold *)",
+      "Bash(kubectl *)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(git push)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean -fd *)",
+      "Bash(git rebase *)",
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(sudo *)"
+    ]
+  },
+  "hooks": {
+    "afterEdit": "./.claude/hooks/after-edit.sh"
+  },
+  "customInstructions": {
+    "verification": {
+      "description": "修正後の動作確認を必須化するルール",
+      "rules": [
+        "ファイルを修正したら、必ず動作確認を行うこと",
+        "ユーザーが「動かない」と報告したら、まず自分のコードを疑う",
+        "「スーパーリロードしてください」は最後の手段",
+        "ブラウザコンソールのエラーを必ず確認すること"
+      ]
+    }
+  }
+}
