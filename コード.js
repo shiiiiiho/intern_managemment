@@ -83,16 +83,10 @@ function getAllDailyReportsInternal(dailyReportSheet) {
 
     for (let i = 0; i < values.length; i++) {
       const row = values[i];
-      allDailyReports.push({
-        internName: row[0], // A: インターン生名
-        attendanceDate: Utilities.formatDate(new Date(row[1]), 'JST', 'yyyy/MM/dd'), // B: 出勤日
-        satisfaction: row[2], // C: 今日の満足度
-        workContent: row[3], // D: 業務内容
-        impression: row[4], // E: 所感・学び
-        managerFeedback: row[5], // F: 管理者フィードバック
-        feedbackGiverName: row[6], // G: FB入力者名
-        reportId: row[7], // H: 日報ID
-      });
+      const report = createDailyReport(row, i);
+      if (report) {
+        allDailyReports.push(report);
+      }
     }
     return allDailyReports;
   } catch (e) {
@@ -536,11 +530,8 @@ function getUsers() {
     }
 
     const users = values
-      .map(row => ({
-        name: row[0], // A列: 氏名
-        role: row[1] ? row[1].trim() : '', // B列: 権限
-      }))
-      .filter(user => user.name); // 名前が空の行は除外
+      .map((row, index) => createUserEntry(row, index))
+      .filter(user => user && user.name);
 
     if (users.length === 0 && values.length > 0) {
       return {
@@ -576,11 +567,11 @@ function getUserInfoByName(name, userSheet) {
   const values = dataRange.getValues();
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
-    const rowName = row[0]; // A列: 氏名
-    if (rowName === name) {
+    const entry = createUserEntry(row, i);
+    if (entry && entry.name === name) {
       return {
-        name: row[0],
-        role: row[1] ? row[1].trim() : '',
+        name: entry.name,
+        role: entry.role,
       };
     }
   }
@@ -605,11 +596,10 @@ function getAllInternNamesInternal(userSheet) {
     const values = dataRange.getValues();
     const internNames = [];
 
-    values.forEach(row => {
-      const name = row[0]; // A列: 氏名
-      const role = row[1]; // B列: 権限
-      if (role && role.trim() === 'インターン生') {
-        internNames.push(name);
+    values.forEach((row, index) => {
+      const entry = createUserEntry(row, index);
+      if (entry && isIntern(entry)) {
+        internNames.push(entry.name);
       }
     });
     return internNames;

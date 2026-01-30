@@ -43,6 +43,11 @@ export default [
         ScriptApp: 'readonly',
         createShiftEvent: 'readonly',
         createWorkInstructionEvent: 'readonly',
+        createDailyReport: 'readonly',
+        createUserEntry: 'readonly',
+        isIntern: 'readonly',
+        buildShiftEventHTML: 'readonly',
+        buildInstructionEventHTML: 'readonly',
       },
     },
     rules: {
