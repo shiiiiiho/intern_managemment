@@ -34,8 +34,16 @@ export default [
         module: 'readonly',
         require: 'readonly',
         exports: 'readonly',
-        Buffer: 'readonly'
-      }
+        Buffer: 'readonly',
+        SpreadsheetApp: 'readonly',
+        Utilities: 'readonly',
+        HtmlService: 'readonly',
+        Logger: 'readonly',
+        PropertiesService: 'readonly',
+        ScriptApp: 'readonly',
+        createShiftEvent: 'readonly',
+        createWorkInstructionEvent: 'readonly',
+      },
     },
     rules: {
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
@@ -47,8 +55,8 @@ export default [
       semi: 'off',
       quotes: 'off',
       indent: 'off',
-      'comma-dangle': 'off'
-    }
+      'comma-dangle': 'off',
+    },
   },
   {
     files: ['**/*.test.js', '**/*.spec.js', 'tests/**/*.js'],
@@ -62,9 +70,9 @@ export default [
         afterAll: 'readonly',
         beforeEach: 'readonly',
         afterEach: 'readonly',
-        jest: 'readonly'
-      }
-    }
+        jest: 'readonly',
+      },
+    },
   },
   {
     ignores: [
@@ -74,7 +82,7 @@ export default [
       'logs/**',
       '*.min.js',
       'coverage/**',
-      'playwright-report/**'
-    ]
-  }
+      'playwright-report/**',
+    ],
+  },
 ];
