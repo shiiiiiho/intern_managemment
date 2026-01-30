@@ -239,8 +239,43 @@
     <div id="global-loader" style="display: none">読み込み中...</div>
     <script>
       // User info will be populated in APP_DATA.userInfo
+
+      function buildShiftEventHTML({ title, internColor, formattedStartTime, formattedEndTime }) {
+        const timeText =
+          formattedStartTime && formattedEndTime ? `${formattedStartTime}~${formattedEndTime}` : '';
+        return `
+          <div class="fc-event-shift">
+            <span class="fc-event-dot" style="background-color:${internColor || '#ccc'};"></span>
+            <span class="fc-event-label">${title}</span>
+            ${timeText ? `<span class="fc-event-time">${timeText}</span>` : ''}
+          </div>
+        `;
+      }
+
+      function buildInstructionEventHTML({
+        title,
+        formattedStartTime,
+        formattedEndTime,
+        category,
+      }) {
+        const timeText =
+          formattedStartTime && formattedEndTime ? `${formattedStartTime}~${formattedEndTime}` : '';
+        const colorMap = {
+          インタビュー: '#e54b4b',
+          採用イベント: '#4a90e2',
+          Dooox: '#111',
+          その他: '#6c63ff',
+        };
+        const color = colorMap[category] || '#666';
+
+        return `
+          <div class="fc-event-anchor" style="color:white; background-color:${color};">
+            <span class="fc-event-label">${title}</span>
+            ${timeText ? `<span class="fc-event-time">${timeText}</span>` : ''}
+          </div>
+        `;
+      }
     </script>
-    <script src="calendarRenderers.js"></script>
 
     <nav style="display: none">
       <a onclick="showView('calendar-view')" class="nav-tab" id="tab-calendar">📅 カレンダー</a>
@@ -919,25 +954,34 @@
         eventContent: function (arg) {
           const props = arg.event.extendedProps;
           if (props.type === 'instruction') {
+            const category = props.category;
+            const colorMap = {
+              インタビュー: 'pink',
+              採用イベント: 'lightblue',
+              Dooox: 'black',
+              その他: 'purple',
+            };
+            const color = colorMap[category] || 'gray'; // Default to gray
+
+            // By setting background and border color to the same value, it appears as a solid block.
             return {
-              html: buildInstructionEventHTML({
-                title: arg.event.title,
-                formattedStartTime: props.formattedStartTime,
-                formattedEndTime: props.formattedEndTime,
-                category: props.category,
-              }),
+              html: `<div class="fc-event-main-frame" style="background-color: ${color}; border-color: ${color}; color: white; padding: 2px 5px; border-radius: 3px;">
+              ${props.formattedStartTime}-${props.formattedEndTime} ${arg.event.title}
+            </div>`,
             };
           } else if (props.type === 'shift') {
+            const internColor = props.internColor || '#ccc'; // Default to gray if no color assigned
             return {
-              html: buildShiftEventHTML({
-                title: arg.event.title,
-                internColor: props.internColor,
-                formattedStartTime: props.formattedStartTime,
-                formattedEndTime: props.formattedEndTime,
-              }),
+              html: `
+              <div style="display: flex; align-items: center;">
+                <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:${internColor}; margin-right:5px;"></span>
+                <span>${arg.event.title}</span>
+              </div>
+            `,
             };
+          } else {
+            return { html: arg.event.title }; // Default rendering for other events
           }
-          return { html: arg.event.title };
         },
         dayCellDidMount: function (arg) {
           const holiday = JapaneseHolidays.isHoliday(arg.date);

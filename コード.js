@@ -83,10 +83,16 @@ function getAllDailyReportsInternal(dailyReportSheet) {
 
     for (let i = 0; i < values.length; i++) {
       const row = values[i];
-      const report = createDailyReport(row, i);
-      if (report) {
-        allDailyReports.push(report);
-      }
+      allDailyReports.push({
+        internName: row[0], // A: インターン生名
+        attendanceDate: Utilities.formatDate(new Date(row[1]), 'JST', 'yyyy/MM/dd'), // B: 出勤日
+        satisfaction: row[2], // C: 今日の満足度
+        workContent: row[3], // D: 業務内容
+        impression: row[4], // E: 所感・学び
+        managerFeedback: row[5], // F: 管理者フィードバック
+        feedbackGiverName: row[6], // G: FB入力者名
+        reportId: row[7], // H: 日報ID
+      });
     }
     return allDailyReports;
   } catch (e) {
@@ -530,8 +536,11 @@ function getUsers() {
     }
 
     const users = values
-      .map((row, index) => createUserEntry(row, index))
-      .filter(user => user && user.name);
+      .map(row => ({
+        name: row[0], // A列: 氏名
+        role: row[1] ? row[1].trim() : '', // B列: 権限
+      }))
+      .filter(user => user.name); // 名前が空の行は除外
 
     if (users.length === 0 && values.length > 0) {
       return {
@@ -567,11 +576,11 @@ function getUserInfoByName(name, userSheet) {
   const values = dataRange.getValues();
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
-    const entry = createUserEntry(row, i);
-    if (entry && entry.name === name) {
+    const rowName = row[0]; // A列: 氏名
+    if (rowName === name) {
       return {
-        name: entry.name,
-        role: entry.role,
+        name: row[0],
+        role: row[1] ? row[1].trim() : '',
       };
     }
   }
@@ -596,10 +605,11 @@ function getAllInternNamesInternal(userSheet) {
     const values = dataRange.getValues();
     const internNames = [];
 
-    values.forEach((row, index) => {
-      const entry = createUserEntry(row, index);
-      if (entry && isIntern(entry)) {
-        internNames.push(entry.name);
+    values.forEach(row => {
+      const name = row[0]; // A列: 氏名
+      const role = row[1]; // B列: 権限
+      if (role && role.trim() === 'インターン生') {
+        internNames.push(name);
       }
     });
     return internNames;
@@ -622,28 +632,43 @@ function getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet) {
     if (sheet && sheet.getLastRow() >= 2) {
       const shiftValues = sheet.getRange(2, 1, sheet.getLastRow() - 1, 12).getValues(); // A-L
       for (const row of shiftValues) {
-        const shiftEvent = createShiftEvent(row);
-        if (!shiftEvent) {
-          continue;
+        const [
+          applyDate,
+          internName,
+          hopeDate,
+          startTime,
+          endTime,
+          status,
+          ,
+          ,
+          shiftId,
+          workInstructionText,
+        ] = row;
+        if (status === '確定' && internName && hopeDate && startTime && endTime) {
+          const startDateTime = new Date(hopeDate);
+          startDateTime.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0);
+          const endDateTime = new Date(hopeDate);
+          endDateTime.setHours(endTime.getHours(), endTime.getMinutes(), 0, 0);
+
+          // Assign color to intern
+          if (!internColors[internName]) {
+            internColors[internName] = COLOR_PALETTE[colorIndex % COLOR_PALETTE.length];
+            colorIndex++;
+          }
+
+          events.push({
+            title: `${internName} ${Utilities.formatDate(startDateTime, 'JST', 'HH:mm')}~${Utilities.formatDate(endDateTime, 'JST', 'HH:mm')}`,
+            start: startDateTime.toISOString(),
+            end: endDateTime.toISOString(),
+            extendedProps: {
+              shiftId: shiftId,
+              type: 'shift',
+              internName: internName,
+              workInstruction: workInstructionText || '',
+              internColor: internColors[internName], // Add intern color
+            },
+          });
         }
-
-        const internName = shiftEvent.internName;
-        if (!internName) {
-          continue;
-        }
-
-        if (!internColors[internName]) {
-          internColors[internName] = COLOR_PALETTE[colorIndex % COLOR_PALETTE.length];
-          colorIndex++;
-        }
-
-        const eventPayload = {
-          ...shiftEvent,
-          type: 'shift',
-          internColor: internColors[internName],
-        };
-
-        events.push(eventPayload);
       }
     }
 
@@ -654,23 +679,39 @@ function getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet) {
         .getRange(2, 1, instructionSheet.getLastRow() - 1, 8)
         .getValues(); // A-H
       for (const row of instructionValues) {
-        const instructionEvent = createWorkInstructionEvent(row);
-        if (!instructionEvent) {
-          continue;
-        }
+        let [targetDate, startTime, endTime, category, otherDesc, memo, creatorName, workId] = row;
+        if (targetDate && category && startTime && endTime) {
+          // Ensure time values are strings, as Google Sheets can return them as Date objects
+          if (startTime instanceof Date) {
+            startTime = Utilities.formatDate(startTime, 'JST', 'HH:mm');
+          }
+          if (endTime instanceof Date) {
+            endTime = Utilities.formatDate(endTime, 'JST', 'HH:mm');
+          }
 
-        events.push({
-          title: instructionEvent.title,
-          start: instructionEvent.start,
-          end: instructionEvent.end,
-          extendedProps: {
-            workId: instructionEvent.workId,
-            type: 'instruction',
-            category: instructionEvent.category,
-            formattedStartTime: instructionEvent.formattedStartTime,
-            formattedEndTime: instructionEvent.formattedEndTime,
-          },
-        });
+          const title = category === 'その他' && otherDesc ? otherDesc : category;
+
+          const startDateTime = new Date(targetDate);
+          const [startHours, startMinutes] = startTime.split(':');
+          startDateTime.setHours(startHours, startMinutes, 0, 0);
+
+          const endDateTime = new Date(targetDate);
+          const [endHours, endMinutes] = endTime.split(':');
+          endDateTime.setHours(endHours, endMinutes, 0, 0);
+
+          events.push({
+            title: title,
+            start: startDateTime.toISOString(),
+            end: endDateTime.toISOString(),
+            extendedProps: {
+              workId: workId,
+              type: 'instruction',
+              category: category,
+              formattedStartTime: Utilities.formatDate(startDateTime, 'JST', 'HH:mm'),
+              formattedEndTime: Utilities.formatDate(endDateTime, 'JST', 'HH:mm'),
+            },
+          });
+        }
       }
     }
 
