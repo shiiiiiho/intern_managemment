@@ -15,6 +15,9 @@
         padding: 10px 20px;
         border-bottom: 1px solid #ddd;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        position: sticky;
+        top: 0;
+        z-index: 1000;
       }
       .nav-tab {
         display: inline-block;
@@ -85,6 +88,21 @@
       }
       th {
         background-color: #f2f2f2;
+      }
+      #daily-reports-table {
+        table-layout: fixed;
+      }
+      #daily-reports-table th:nth-child(5),
+      #daily-reports-table td:nth-child(5) {
+        width: 20%;
+      }
+      #daily-reports-table th:nth-child(6),
+      #daily-reports-table td:nth-child(6) {
+        width: 20%;
+      }
+      #daily-reports-table th:nth-child(4),
+      #daily-reports-table td:nth-child(4) {
+        width: 16%;
       }
       .approve-btn {
         background-color: #28a745;
@@ -954,7 +972,11 @@
           if (isManager) {
             document.getElementById('admin-content-authorized').style.display = 'block';
             document.getElementById('admin-content-denied').style.display = 'none';
-            loadAdminDataAndRender();
+            if (adminDataLoaded) {
+              initializeAdminView();
+            } else {
+              loadAdminDataAndRender({ showLoader: false, renderView: true, force: true });
+            }
           } else {
             document.getElementById('admin-content-authorized').style.display = 'none';
             document.getElementById('admin-content-denied').style.display = 'block';
@@ -985,7 +1007,15 @@
             document.getElementById('daily-report-management-content').style.display = 'block';
             document.getElementById('daily-report-management-denied').style.display = 'none';
             if (isManager) {
-              loadDailyReportManagementDataAndRender();
+              if (dailyReportDataLoaded) {
+                initializeDailyReportManagementView();
+              } else {
+                loadDailyReportManagementDataAndRender({
+                  showLoader: false,
+                  renderView: true,
+                  force: true,
+                });
+              }
             } else {
               initializeDailyReportManagementView();
             }
@@ -2071,6 +2101,15 @@
         // Now, call the main data handler function.
         // It will set the global APP_DATA, render the calendar, hide the loader, and show the initial view.
         onInitialDataLoaded(data);
+
+        if (isManager) {
+          loadAdminDataAndRender({ showLoader: false, renderView: false, force: true });
+          loadDailyReportManagementDataAndRender({
+            showLoader: false,
+            renderView: false,
+            force: true,
+          });
+        }
       }
 
       function onLoginFailure(error) {
@@ -2090,7 +2129,11 @@
 
         // If admin view is active, re-render it
         if (document.getElementById('admin-view').style.display === 'block') {
-          loadAdminDataAndRender();
+          if (adminDataLoaded) {
+            initializeAdminView();
+          } else {
+            loadAdminDataAndRender({ showLoader: true, renderView: true, force: true });
+          }
         }
         // If daily report management view is active, re-render it
         if (document.getElementById('daily-report-management-view').style.display === 'block') {
@@ -2098,7 +2141,15 @@
           const isManager =
             userRole === '採用担当' || userRole === 'Dooox' || userRole === '人事担当';
           if (isManager) {
-            loadDailyReportManagementDataAndRender();
+            if (dailyReportDataLoaded) {
+              initializeDailyReportManagementView();
+            } else {
+              loadDailyReportManagementDataAndRender({
+                showLoader: true,
+                renderView: true,
+                force: true,
+              });
+            }
           } else {
             initializeDailyReportManagementView();
           }
@@ -2110,35 +2161,84 @@
         }
       }
 
-      function loadAdminDataAndRender() {
-        document.getElementById('global-loader').style.display = 'flex';
-        document.getElementById('global-loader').innerText = 'シフト管理を読み込み中...';
+      let adminDataLoaded = false;
+      let dailyReportDataLoaded = false;
+      let adminDataLoading = false;
+      let dailyReportDataLoading = false;
+
+      function loadAdminDataAndRender(options = {}) {
+        const showLoader = options.showLoader !== false;
+        const renderView = options.renderView !== false;
+        const force = options.force === true;
+        if (adminDataLoading) {
+          return;
+        }
+        if (adminDataLoaded && !force) {
+          if (renderView) initializeAdminView();
+          return;
+        }
+        adminDataLoading = true;
+        if (showLoader) {
+          document.getElementById('global-loader').style.display = 'flex';
+          document.getElementById('global-loader').innerText = 'シフト管理を読み込み中...';
+        }
         google.script.run
           .withSuccessHandler(function (data) {
-            document.getElementById('global-loader').style.display = 'none';
+            if (showLoader) {
+              document.getElementById('global-loader').style.display = 'none';
+            }
             APP_DATA.allShifts = data.allShifts || [];
             APP_DATA.allInternNames = data.allInternNames || [];
-            initializeAdminView();
+            adminDataLoaded = true;
+            adminDataLoading = false;
+            if (renderView) {
+              initializeAdminView();
+            }
           })
           .withFailureHandler(function (error) {
-            document.getElementById('global-loader').style.display = 'none';
+            if (showLoader) {
+              document.getElementById('global-loader').style.display = 'none';
+            }
+            adminDataLoading = false;
             alert('シフト管理の読み込みに失敗しました: ' + error.message);
           })
           .getAdminShiftData(APP_DATA.userInfo.name);
       }
 
-      function loadDailyReportManagementDataAndRender() {
-        document.getElementById('global-loader').style.display = 'flex';
-        document.getElementById('global-loader').innerText = '日報管理を読み込み中...';
+      function loadDailyReportManagementDataAndRender(options = {}) {
+        const showLoader = options.showLoader !== false;
+        const renderView = options.renderView !== false;
+        const force = options.force === true;
+        if (dailyReportDataLoading) {
+          return;
+        }
+        if (dailyReportDataLoaded && !force) {
+          if (renderView) initializeDailyReportManagementView();
+          return;
+        }
+        dailyReportDataLoading = true;
+        if (showLoader) {
+          document.getElementById('global-loader').style.display = 'flex';
+          document.getElementById('global-loader').innerText = '日報管理を読み込み中...';
+        }
         google.script.run
           .withSuccessHandler(function (data) {
-            document.getElementById('global-loader').style.display = 'none';
+            if (showLoader) {
+              document.getElementById('global-loader').style.display = 'none';
+            }
             APP_DATA.dailyReportsForManager = data.dailyReportsForManager || [];
             APP_DATA.allInternNames = data.allInternNames || [];
-            initializeDailyReportManagementView();
+            dailyReportDataLoaded = true;
+            dailyReportDataLoading = false;
+            if (renderView) {
+              initializeDailyReportManagementView();
+            }
           })
           .withFailureHandler(function (error) {
-            document.getElementById('global-loader').style.display = 'none';
+            if (showLoader) {
+              document.getElementById('global-loader').style.display = 'none';
+            }
+            dailyReportDataLoading = false;
             alert('日報管理の読み込みに失敗しました: ' + error.message);
           })
           .getDailyReportManagementData(APP_DATA.userInfo.name);
