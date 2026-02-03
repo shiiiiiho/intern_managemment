@@ -194,6 +194,74 @@
         width: 100%;
         display: block;
       }
+      /* Compact calendar events to prevent overflow in day cells */
+      .fc .fc-daygrid-event {
+        font-size: 0.85em;
+        line-height: 1.2;
+        padding: 2px 3px;
+        min-height: 22px;
+        display: block;
+        overflow: hidden;
+      }
+      /* Shift: 2 lines (name + time), no ellipsis */
+      .fc-event-shift {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .fc-event-shift-header {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+      }
+      .fc-event-shift .fc-event-label {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+      }
+      /* Instruction: single line */
+      .fc-event-anchor {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .fc-event-anchor .fc-event-label {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .fc-event-cancelled .fc-event-label,
+      .fc-event-cancelled .fc-event-time {
+        text-decoration: line-through;
+        opacity: 0.6;
+      }
+      .fc-event-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+      }
+      .fc-event-label {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-weight: 500;
+      }
+      .fc-event-time {
+        font-size: 0.8em;
+        color: #555;
+        opacity: 0.9;
+        white-space: nowrap;
+        flex: 0 0 auto;
+      }
+      .fc-event-anchor .fc-event-time {
+        color: inherit;
+      }
 
       /* Global Loading Overlay */
       #global-loader {
@@ -239,14 +307,37 @@
     <div id="global-loader" style="display: none">読み込み中...</div>
     <script>
       // User info will be populated in APP_DATA.userInfo
+      const detailCache = { shift: {}, instruction: {} };
 
-      function buildShiftEventHTML({ title, internColor, formattedStartTime, formattedEndTime }) {
+      function getCachedShiftDetails(shiftId) {
+        return detailCache.shift[shiftId] || null;
+      }
+      function setCachedShiftDetails(shiftId, details) {
+        detailCache.shift[shiftId] = details;
+      }
+      function getCachedScheduleDetails(workId) {
+        return detailCache.instruction[workId] || null;
+      }
+      function setCachedScheduleDetails(workId, details) {
+        detailCache.instruction[workId] = details;
+      }
+
+      function buildShiftEventHTML({
+        title,
+        internColor,
+        formattedStartTime,
+        formattedEndTime,
+        isCancelled,
+      }) {
         const timeText =
           formattedStartTime && formattedEndTime ? `${formattedStartTime}~${formattedEndTime}` : '';
+        const cancelledClass = isCancelled ? ' fc-event-cancelled' : '';
         return `
-          <div class="fc-event-shift">
-            <span class="fc-event-dot" style="background-color:${internColor || '#ccc'};"></span>
-            <span class="fc-event-label">${title}</span>
+          <div class="fc-event-shift${cancelledClass}">
+            <div class="fc-event-shift-header">
+              <span class="fc-event-dot" style="background-color:${internColor || '#ccc'};"></span>
+              <span class="fc-event-label">${title}</span>
+            </div>
             ${timeText ? `<span class="fc-event-time">${timeText}</span>` : ''}
           </div>
         `;
@@ -257,6 +348,7 @@
         formattedStartTime,
         formattedEndTime,
         category,
+        isCancelled,
       }) {
         const timeText =
           formattedStartTime && formattedEndTime ? `${formattedStartTime}~${formattedEndTime}` : '';
@@ -267,9 +359,11 @@
           その他: '#6c63ff',
         };
         const color = colorMap[category] || '#666';
+        const textColor = category === 'Dooox' ? '#fff' : '#000';
+        const cancelledClass = isCancelled ? ' fc-event-cancelled' : '';
 
         return `
-          <div class="fc-event-anchor" style="color:white; background-color:${color};">
+          <div class="fc-event-anchor${cancelledClass}" style="color:${textColor}; background-color:${color};">
             <span class="fc-event-label">${title}</span>
             ${timeText ? `<span class="fc-event-time">${timeText}</span>` : ''}
           </div>
@@ -569,8 +663,14 @@
             <button id="modal-schedule-save-btn" class="approve-btn" style="display: none">
               保存
             </button>
+            <button id="modal-schedule-uncancel-btn" class="approve-btn" style="display: none">
+              中止解除
+            </button>
             <button id="modal-schedule-delete-btn" class="reject-btn" style="display: none">
               削除
+            </button>
+            <button id="modal-schedule-cancel-btn" class="reject-btn" style="margin-left: 8px">
+              中止
             </button>
             <button type="button" id="modal-schedule-close-btn" style="background-color: #6c757d">
               閉じる
@@ -614,6 +714,12 @@
             </button>
             <button id="modal-shift-save-btn" class="approve-btn" style="display: none">
               保存
+            </button>
+            <button id="modal-shift-uncancel-btn" class="approve-btn" style="display: none">
+              中止解除
+            </button>
+            <button id="modal-shift-cancel-btn" class="reject-btn" style="margin-left: 8px">
+              中止
             </button>
             <button type="button" id="modal-shift-close-btn" style="background-color: #6c757d">
               閉じる
@@ -848,7 +954,7 @@
           if (isManager) {
             document.getElementById('admin-content-authorized').style.display = 'block';
             document.getElementById('admin-content-denied').style.display = 'none';
-            initializeAdminView();
+            loadAdminDataAndRender();
           } else {
             document.getElementById('admin-content-authorized').style.display = 'none';
             document.getElementById('admin-content-denied').style.display = 'block';
@@ -878,7 +984,11 @@
           if (isManager || userRole === 'インターン生') {
             document.getElementById('daily-report-management-content').style.display = 'block';
             document.getElementById('daily-report-management-denied').style.display = 'none';
-            initializeDailyReportManagementView();
+            if (isManager) {
+              loadDailyReportManagementDataAndRender();
+            } else {
+              initializeDailyReportManagementView();
+            }
           } else {
             document.getElementById('daily-report-management-content').style.display = 'none';
             document.getElementById('daily-report-management-denied').style.display = 'block';
@@ -911,6 +1021,7 @@
         displayEventTime: false,
         events: [],
         eventClick: function (info) {
+          activeCalendarEvent = info.event;
           const props = info.event.extendedProps;
           document.getElementById('modal-overlay').style.display = 'flex';
           document.getElementById('modal-schedule-details').style.display = 'none';
@@ -919,15 +1030,20 @@
           if (props.type === 'shift') {
             document.getElementById('modal-shift-details').style.display = 'block';
 
-            const shiftInfo = APP_DATA.allShifts.find(s => s.shiftId === props.shiftId);
+            const cachedShiftDetails = getCachedShiftDetails(props.shiftId);
+            if (cachedShiftDetails) {
+              onShiftDetailsLoaded(cachedShiftDetails);
+              return;
+            }
+
+            const shiftInfo = (APP_DATA.allShifts || []).find(s => s.shiftId === props.shiftId);
             if (!shiftInfo) {
-              alert('シフト詳細が見つかりませんでした。');
-              closeModal();
+              fetchShiftDetails(props.shiftId);
               return;
             }
 
             // Find related daily report
-            const dailyReport = APP_DATA.allDailyReports.find(
+            const dailyReport = (APP_DATA.allDailyReports || []).find(
               dr =>
                 dr.internName === shiftInfo.internName && dr.attendanceDate === shiftInfo.hopeDate
             );
@@ -936,12 +1052,17 @@
           } else if (props.type === 'instruction') {
             document.getElementById('modal-schedule-details').style.display = 'block';
 
-            const scheduleDetails = APP_DATA.allWorkInstructions.find(
+            const cachedScheduleDetails = getCachedScheduleDetails(props.workId);
+            if (cachedScheduleDetails) {
+              onScheduleDetailsLoaded(cachedScheduleDetails);
+              return;
+            }
+
+            const scheduleDetails = (APP_DATA.allWorkInstructions || []).find(
               wi => wi.workId === props.workId
             );
             if (!scheduleDetails) {
-              alert('予定詳細が見つかりませんでした。');
-              closeModal();
+              fetchScheduleDetails(props.workId);
               return;
             }
             onScheduleDetailsLoaded(scheduleDetails);
@@ -954,34 +1075,28 @@
         eventContent: function (arg) {
           const props = arg.event.extendedProps;
           if (props.type === 'instruction') {
-            const category = props.category;
-            const colorMap = {
-              インタビュー: 'pink',
-              採用イベント: 'lightblue',
-              Dooox: 'black',
-              その他: 'purple',
-            };
-            const color = colorMap[category] || 'gray'; // Default to gray
-
-            // By setting background and border color to the same value, it appears as a solid block.
             return {
-              html: `<div class="fc-event-main-frame" style="background-color: ${color}; border-color: ${color}; color: white; padding: 2px 5px; border-radius: 3px;">
-              ${props.formattedStartTime}-${props.formattedEndTime} ${arg.event.title}
-            </div>`,
+              html: buildInstructionEventHTML({
+                title: arg.event.title,
+                formattedStartTime: props.formattedStartTime,
+                formattedEndTime: props.formattedEndTime,
+                category: props.category,
+                isCancelled: props.isCancelled,
+              }),
             };
-          } else if (props.type === 'shift') {
-            const internColor = props.internColor || '#ccc'; // Default to gray if no color assigned
-            return {
-              html: `
-              <div style="display: flex; align-items: center;">
-                <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:${internColor}; margin-right:5px;"></span>
-                <span>${arg.event.title}</span>
-              </div>
-            `,
-            };
-          } else {
-            return { html: arg.event.title }; // Default rendering for other events
           }
+          if (props.type === 'shift') {
+            return {
+              html: buildShiftEventHTML({
+                title: arg.event.title,
+                internColor: props.internColor,
+                formattedStartTime: props.formattedStartTime,
+                formattedEndTime: props.formattedEndTime,
+                isCancelled: props.isCancelled,
+              }),
+            };
+          }
+          return { html: arg.event.title };
         },
         dayCellDidMount: function (arg) {
           const holiday = JapaneseHolidays.isHoliday(arg.date);
@@ -993,6 +1108,100 @@
       function renderCalendarEvents(events) {
         calendar.removeAllEvents();
         calendar.addEventSource(events);
+        setTimeout(prefetchDetailsForVisibleEvents, 0);
+      }
+
+      function parseYmdToDate(ymd) {
+        if (!ymd) {
+          return null;
+        }
+        const parts = ymd.split('/');
+        if (parts.length !== 3) {
+          return new Date(ymd);
+        }
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        return new Date(year, month, day);
+      }
+
+      function getInternColorFromCalendar(internName) {
+        if (!internName) {
+          return '#999';
+        }
+        const existing = calendar
+          .getEvents()
+          .find(ev => ev.extendedProps && ev.extendedProps.internName === internName);
+        return existing && existing.extendedProps && existing.extendedProps.internColor
+          ? existing.extendedProps.internColor
+          : '#999';
+      }
+
+      function addInstructionEventToCalendar(workInstruction) {
+        if (!workInstruction) {
+          return;
+        }
+        const date = parseYmdToDate(workInstruction.date);
+        if (!date) {
+          return;
+        }
+        const [startHours, startMinutes] = workInstruction.startTime.split(':');
+        const [endHours, endMinutes] = workInstruction.endTime.split(':');
+        const startDateTime = new Date(date);
+        startDateTime.setHours(startHours, startMinutes, 0, 0);
+        const endDateTime = new Date(date);
+        endDateTime.setHours(endHours, endMinutes, 0, 0);
+
+        const title =
+          workInstruction.category === 'その他' && workInstruction.otherDescription
+            ? workInstruction.otherDescription
+            : workInstruction.category;
+
+        calendar.addEvent({
+          title: title,
+          start: startDateTime.toISOString(),
+          end: endDateTime.toISOString(),
+          extendedProps: {
+            workId: workInstruction.workId,
+            type: 'instruction',
+            category: workInstruction.category,
+            formattedStartTime: workInstruction.startTime,
+            formattedEndTime: workInstruction.endTime,
+          },
+        });
+      }
+
+      function addShiftEventToCalendar(shift) {
+        if (!shift || shift.status !== '確定') {
+          return;
+        }
+        const date = parseYmdToDate(shift.hopeDate);
+        if (!date) {
+          return;
+        }
+        const [startHours, startMinutes] = shift.startTime.split(':');
+        const [endHours, endMinutes] = shift.endTime.split(':');
+        const startDateTime = new Date(date);
+        startDateTime.setHours(startHours, startMinutes, 0, 0);
+        const endDateTime = new Date(date);
+        endDateTime.setHours(endHours, endMinutes, 0, 0);
+
+        const internColor = getInternColorFromCalendar(shift.internName);
+        const title = `${shift.internName} ${shift.startTime}~${shift.endTime}`;
+
+        calendar.addEvent({
+          title: title,
+          start: startDateTime.toISOString(),
+          end: endDateTime.toISOString(),
+          extendedProps: {
+            shiftId: shift.shiftId,
+            type: 'shift',
+            internName: shift.internName,
+            internColor: internColor,
+            formattedStartTime: shift.startTime,
+            formattedEndTime: shift.endTime,
+          },
+        });
       }
 
       // ------------------------------------
@@ -1011,6 +1220,7 @@
         // --- Reset button states ---
         document.getElementById('modal-schedule-edit-btn').style.display = 'none';
         document.getElementById('modal-schedule-save-btn').style.display = 'none';
+        document.getElementById('modal-schedule-uncancel-btn').style.display = 'none';
         document.getElementById('modal-schedule-delete-btn').style.display = 'none';
         document.getElementById('modal-schedule-view').style.display = 'block';
         document.getElementById('modal-schedule-edit').style.display = 'none';
@@ -1025,6 +1235,12 @@
             <p><strong>メモ:</strong></p>
             <p style="white-space: pre-wrap; min-height: 2em;">${details.memo || ''}</p>
         `;
+        if (details.isCancelled) {
+          document.getElementById('modal-schedule-view').innerHTML +=
+            '<p style="color:#c00; font-weight:bold;">※中止済み</p>';
+        }
+        document.getElementById('modal-schedule-uncancel-btn').dataset.cancelled =
+          details.isCancelled ? 'true' : 'false';
 
         // --- Populate Edit Mode (if manager) ---
         if (isManager) {
@@ -1096,6 +1312,8 @@
         }
         document.getElementById('modal-schedule-edit-btn').onclick = handleScheduleEdit;
         document.getElementById('modal-schedule-save-btn').onclick = handleScheduleSave;
+        document.getElementById('modal-schedule-uncancel-btn').onclick = () =>
+          handleScheduleUncancel(details.workId);
         document.getElementById('modal-schedule-delete-btn').onclick = () =>
           handleScheduleDelete(details.workId);
       }
@@ -1105,6 +1323,9 @@
         document.getElementById('modal-schedule-edit').style.display = 'block';
         document.getElementById('modal-schedule-edit-btn').style.display = 'none';
         document.getElementById('modal-schedule-delete-btn').style.display = 'none';
+        if (document.getElementById('modal-schedule-uncancel-btn').dataset.cancelled === 'true') {
+          document.getElementById('modal-schedule-uncancel-btn').style.display = 'inline-block';
+        }
         document.getElementById('modal-schedule-save-btn').style.display = 'inline-block';
       }
 
@@ -1171,6 +1392,60 @@
           .deleteSchedule(workId);
       }
 
+      function handleShiftUncancel(shiftId) {
+        if (!confirm('中止を解除しますか？')) {
+          return;
+        }
+        document.getElementById('global-loader').style.display = 'flex';
+        document.getElementById('global-loader').innerText = '中止解除中...';
+        google.script.run
+          .withSuccessHandler(function (message) {
+            document.getElementById('global-loader').style.display = 'none';
+            if (activeCalendarEvent) {
+              activeCalendarEvent.setExtendedProp('isCancelled', false);
+            }
+            const cached = getCachedShiftDetails(shiftId);
+            if (cached && cached.shiftInfo) {
+              cached.shiftInfo.isCancelled = false;
+              setCachedShiftDetails(shiftId, cached);
+            }
+            closeModal();
+            alert(message);
+          })
+          .withFailureHandler(function (error) {
+            document.getElementById('global-loader').style.display = 'none';
+            alert('中止解除に失敗しました: ' + error.message);
+          })
+          .uncancelShift(shiftId, APP_DATA.userInfo.name);
+      }
+
+      function handleScheduleUncancel(workId) {
+        if (!confirm('中止を解除しますか？')) {
+          return;
+        }
+        document.getElementById('global-loader').style.display = 'flex';
+        document.getElementById('global-loader').innerText = '中止解除中...';
+        google.script.run
+          .withSuccessHandler(function (message) {
+            document.getElementById('global-loader').style.display = 'none';
+            if (activeCalendarEvent) {
+              activeCalendarEvent.setExtendedProp('isCancelled', false);
+            }
+            const cached = getCachedScheduleDetails(workId);
+            if (cached) {
+              cached.isCancelled = false;
+              setCachedScheduleDetails(workId, cached);
+            }
+            closeModal();
+            alert(message);
+          })
+          .withFailureHandler(function (error) {
+            document.getElementById('global-loader').style.display = 'none';
+            alert('中止解除に失敗しました: ' + error.message);
+          })
+          .uncancelWorkInstruction(workId, APP_DATA.userInfo.name);
+      }
+
       // Generalize populateTimePickers to set initial values
       function populateTimePickers(hourElementId, minuteElementId, initialTime = '09:00') {
         const hourSelect = document.getElementById(hourElementId);
@@ -1219,6 +1494,9 @@
         // Toggle buttons
         document.getElementById('modal-shift-edit-btn').style.display = 'none';
         document.getElementById('modal-shift-save-btn').style.display = 'inline-block';
+        if (document.getElementById('modal-shift-uncancel-btn').dataset.cancelled === 'true') {
+          document.getElementById('modal-shift-uncancel-btn').style.display = 'inline-block';
+        }
       }
 
       function handleShiftModalSave() {
@@ -1333,6 +1611,7 @@
         // --- Reset button states ---
         document.getElementById('modal-shift-edit-btn').style.display = 'none';
         document.getElementById('modal-shift-save-btn').style.display = 'none';
+        document.getElementById('modal-shift-uncancel-btn').style.display = 'none';
         document.getElementById('modal-shift-save-btn').disabled = false;
         document
           .querySelectorAll('.modal-section-view')
@@ -1347,6 +1626,12 @@
           </p>
           <p><strong>日時:</strong> ${formatDateJP(shiftInfo.hopeDate)} ${shiftInfo.startTime} ~ ${shiftInfo.endTime}</p>
         `;
+        if (shiftInfo.isCancelled) {
+          document.getElementById('modal-shift-info').innerHTML +=
+            '<p style="color:#c00; font-weight:bold;">※中止済み</p>';
+        }
+        document.getElementById('modal-shift-uncancel-btn').dataset.cancelled =
+          shiftInfo.isCancelled ? 'true' : 'false';
 
         // --- Populate Work Instruction (WI) ---
         // View
@@ -1416,6 +1701,8 @@
         // Add event listeners
         document.getElementById('modal-shift-edit-btn').onclick = handleShiftModalEdit;
         document.getElementById('modal-shift-save-btn').onclick = handleShiftModalSave;
+        document.getElementById('modal-shift-uncancel-btn').onclick = () =>
+          handleShiftUncancel(shiftInfo.shiftId);
         document.getElementById('modal-shift-close-btn').onclick = handleShiftModalClose;
       }
 
@@ -1477,11 +1764,215 @@
           .submitReport(formData, APP_DATA.userInfo.name);
       }
 
+      let activeCalendarEvent = null;
+
       function closeModal() {
         document.getElementById('modal-overlay').style.display = 'none';
       }
 
+      function fetchShiftDetails(shiftId) {
+        const cached = getCachedShiftDetails(shiftId);
+        if (cached) {
+          onShiftDetailsLoaded(cached);
+          return;
+        }
+        document.getElementById('global-loader').style.display = 'flex';
+        document.getElementById('global-loader').innerText = '詳細を取得中...';
+        google.script.run
+          .withSuccessHandler(function (details) {
+            document.getElementById('global-loader').style.display = 'none';
+            if (!details || !details.shiftInfo) {
+              alert('シフト詳細が見つかりませんでした。');
+              closeModal();
+              return;
+            }
+            if (
+              activeCalendarEvent &&
+              details.shiftInfo &&
+              !details.shiftInfo.internColor &&
+              activeCalendarEvent.extendedProps &&
+              activeCalendarEvent.extendedProps.internColor
+            ) {
+              details.shiftInfo.internColor = activeCalendarEvent.extendedProps.internColor;
+            }
+            if (
+              activeCalendarEvent &&
+              details.shiftInfo &&
+              !details.shiftInfo.isCancelled &&
+              activeCalendarEvent.extendedProps &&
+              activeCalendarEvent.extendedProps.isCancelled
+            ) {
+              details.shiftInfo.isCancelled = true;
+            }
+            setCachedShiftDetails(shiftId, details);
+            onShiftDetailsLoaded(details);
+          })
+          .withFailureHandler(function (error) {
+            document.getElementById('global-loader').style.display = 'none';
+            alert('詳細の取得に失敗しました: ' + error.message);
+            closeModal();
+          })
+          .getShiftDetailsBundle(shiftId);
+      }
+
+      function fetchScheduleDetails(workId) {
+        const cached = getCachedScheduleDetails(workId);
+        if (cached) {
+          onScheduleDetailsLoaded(cached);
+          return;
+        }
+        document.getElementById('global-loader').style.display = 'flex';
+        document.getElementById('global-loader').innerText = '詳細を取得中...';
+        google.script.run
+          .withSuccessHandler(function (details) {
+            document.getElementById('global-loader').style.display = 'none';
+            if (!details) {
+              alert('予定詳細が見つかりませんでした。');
+              closeModal();
+              return;
+            }
+            if (
+              activeCalendarEvent &&
+              details &&
+              !details.isCancelled &&
+              activeCalendarEvent.extendedProps &&
+              activeCalendarEvent.extendedProps.isCancelled
+            ) {
+              details.isCancelled = true;
+            }
+            setCachedScheduleDetails(workId, details);
+            onScheduleDetailsLoaded(details);
+          })
+          .withFailureHandler(function (error) {
+            document.getElementById('global-loader').style.display = 'none';
+            alert('詳細の取得に失敗しました: ' + error.message);
+            closeModal();
+          })
+          .getWorkInstructionById(workId);
+      }
+
+      function prefetchShiftDetails(shiftId, internColor) {
+        if (getCachedShiftDetails(shiftId)) {
+          return;
+        }
+        google.script.run
+          .withSuccessHandler(function (details) {
+            if (!details || !details.shiftInfo) {
+              return;
+            }
+            if (!details.shiftInfo.internColor && internColor) {
+              details.shiftInfo.internColor = internColor;
+            }
+            setCachedShiftDetails(shiftId, details);
+          })
+          .getShiftDetailsBundle(shiftId);
+      }
+
+      function prefetchScheduleDetails(workId) {
+        if (getCachedScheduleDetails(workId)) {
+          return;
+        }
+        google.script.run
+          .withSuccessHandler(function (details) {
+            if (!details) {
+              return;
+            }
+            setCachedScheduleDetails(workId, details);
+          })
+          .getWorkInstructionById(workId);
+      }
+
+      function prefetchDetailsForVisibleEvents() {
+        if (!calendar) {
+          return;
+        }
+        const events = calendar.getEvents();
+        const viewStart = calendar.view.activeStart;
+        const viewEnd = calendar.view.activeEnd;
+        let shiftCount = 0;
+        let instructionCount = 0;
+
+        events.forEach(event => {
+          if (!event.start || event.start < viewStart || event.start >= viewEnd) {
+            return;
+          }
+          const props = event.extendedProps || {};
+          if (props.type === 'shift' && props.shiftId && shiftCount < 6) {
+            if (!getCachedShiftDetails(props.shiftId)) {
+              prefetchShiftDetails(props.shiftId, props.internColor);
+              shiftCount += 1;
+            }
+          }
+          if (props.type === 'instruction' && props.workId && instructionCount < 6) {
+            if (!getCachedScheduleDetails(props.workId)) {
+              prefetchScheduleDetails(props.workId);
+              instructionCount += 1;
+            }
+          }
+        });
+      }
+
       document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+      document.getElementById('modal-schedule-cancel-btn').addEventListener('click', function () {
+        if (activeCalendarEvent) {
+          const workId = activeCalendarEvent.extendedProps
+            ? activeCalendarEvent.extendedProps.workId
+            : null;
+          if (!workId) {
+            alert('予定IDが見つかりません。');
+            return;
+          }
+          document.getElementById('global-loader').style.display = 'flex';
+          document.getElementById('global-loader').innerText = '中止中...';
+          google.script.run
+            .withSuccessHandler(function (message) {
+              document.getElementById('global-loader').style.display = 'none';
+              activeCalendarEvent.setExtendedProp('isCancelled', true);
+              const cached = getCachedScheduleDetails(workId);
+              if (cached) {
+                cached.isCancelled = true;
+                setCachedScheduleDetails(workId, cached);
+              }
+              closeModal();
+              alert(message);
+            })
+            .withFailureHandler(function (error) {
+              document.getElementById('global-loader').style.display = 'none';
+              alert('中止に失敗しました: ' + error.message);
+            })
+            .cancelWorkInstruction(workId, APP_DATA.userInfo.name);
+        }
+      });
+      document.getElementById('modal-shift-cancel-btn').addEventListener('click', function () {
+        if (activeCalendarEvent) {
+          const shiftId = activeCalendarEvent.extendedProps
+            ? activeCalendarEvent.extendedProps.shiftId
+            : null;
+          if (!shiftId) {
+            alert('シフトIDが見つかりません。');
+            return;
+          }
+          document.getElementById('global-loader').style.display = 'flex';
+          document.getElementById('global-loader').innerText = '中止中...';
+          google.script.run
+            .withSuccessHandler(function (message) {
+              document.getElementById('global-loader').style.display = 'none';
+              activeCalendarEvent.setExtendedProp('isCancelled', true);
+              const cached = getCachedShiftDetails(shiftId);
+              if (cached && cached.shiftInfo) {
+                cached.shiftInfo.isCancelled = true;
+                setCachedShiftDetails(shiftId, cached);
+              }
+              closeModal();
+              alert(message);
+            })
+            .withFailureHandler(function (error) {
+              document.getElementById('global-loader').style.display = 'none';
+              alert('中止に失敗しました: ' + error.message);
+            })
+            .cancelShift(shiftId, APP_DATA.userInfo.name);
+        }
+      });
       document.getElementById('modal-overlay').addEventListener('click', function (event) {
         if (event.target === this) {
           // Only close if overlay itself is clicked
@@ -1599,17 +2090,58 @@
 
         // If admin view is active, re-render it
         if (document.getElementById('admin-view').style.display === 'block') {
-          initializeAdminView();
+          loadAdminDataAndRender();
         }
         // If daily report management view is active, re-render it
         if (document.getElementById('daily-report-management-view').style.display === 'block') {
-          initializeDailyReportManagementView();
+          const userRole = APP_DATA.userInfo.role;
+          const isManager =
+            userRole === '採用担当' || userRole === 'Dooox' || userRole === '人事担当';
+          if (isManager) {
+            loadDailyReportManagementDataAndRender();
+          } else {
+            initializeDailyReportManagementView();
+          }
         }
 
         // Set initial view only on the very first load
         if (!document.querySelector('.view[style*="block"]')) {
           showView('calendar-view');
         }
+      }
+
+      function loadAdminDataAndRender() {
+        document.getElementById('global-loader').style.display = 'flex';
+        document.getElementById('global-loader').innerText = 'シフト管理を読み込み中...';
+        google.script.run
+          .withSuccessHandler(function (data) {
+            document.getElementById('global-loader').style.display = 'none';
+            APP_DATA.allShifts = data.allShifts || [];
+            APP_DATA.allInternNames = data.allInternNames || [];
+            initializeAdminView();
+          })
+          .withFailureHandler(function (error) {
+            document.getElementById('global-loader').style.display = 'none';
+            alert('シフト管理の読み込みに失敗しました: ' + error.message);
+          })
+          .getAdminShiftData(APP_DATA.userInfo.name);
+      }
+
+      function loadDailyReportManagementDataAndRender() {
+        document.getElementById('global-loader').style.display = 'flex';
+        document.getElementById('global-loader').innerText = '日報管理を読み込み中...';
+        google.script.run
+          .withSuccessHandler(function (data) {
+            document.getElementById('global-loader').style.display = 'none';
+            APP_DATA.dailyReportsForManager = data.dailyReportsForManager || [];
+            APP_DATA.allInternNames = data.allInternNames || [];
+            initializeDailyReportManagementView();
+          })
+          .withFailureHandler(function (error) {
+            document.getElementById('global-loader').style.display = 'none';
+            alert('日報管理の読み込みに失敗しました: ' + error.message);
+          })
+          .getDailyReportManagementData(APP_DATA.userInfo.name);
       }
 
       // ------------------------------------
@@ -1734,12 +2266,21 @@
         statusDiv.innerText = '作成中...';
 
         google.script.run
-          .withSuccessHandler(function (message) {
+          .withSuccessHandler(function (response) {
             document.getElementById('admin-create-shift-overlay').style.display = 'none';
             formObject.reset();
             submitBtn.disabled = false;
             statusDiv.innerText = '';
-            reloadDataAndSwitchToCalendar(message); // Reload data and show confirmation
+            const message = response && response.message ? response.message : response;
+            if (response && response.shift) {
+              APP_DATA.allShifts = APP_DATA.allShifts || [];
+              APP_DATA.allShifts.push(response.shift);
+              renderAdminShifts();
+              if (response.shift.status === '確定') {
+                addShiftEventToCalendar(response.shift);
+              }
+            }
+            alert(message);
           })
           .withFailureHandler(function (error) {
             statusDiv.innerText = 'エラー: ' + error.message;
@@ -1795,7 +2336,16 @@
         }
         google.script.run
           .withSuccessHandler(function (message) {
-            reloadDataAndSwitchToCalendar(message);
+            alert(message);
+            const allShifts = APP_DATA.allShifts || [];
+            const target = allShifts.find(shift => shift.shiftId === shiftId);
+            if (target) {
+              target.status = '確定';
+              renderAdminShifts();
+              addShiftEventToCalendar(target);
+            } else {
+              reloadDataAndSwitchToCalendar();
+            }
           })
           .withFailureHandler(onFailure)
           .approveShift(rowNumber, shiftId, APP_DATA.userInfo.name);
@@ -1808,9 +2358,14 @@
         google.script.run
           .withSuccessHandler(function (message) {
             alert(message);
-            google.script.run
-              .withSuccessHandler(onInitialDataLoaded)
-              .getInitialDataForUser(APP_DATA.userInfo.name); // Re-fetch data
+            const allShifts = APP_DATA.allShifts || [];
+            const target = allShifts.find(shift => shift.shiftId === shiftId);
+            if (target) {
+              target.status = '棄却';
+              renderAdminShifts();
+            } else {
+              reloadDataAndSwitchToCalendar();
+            }
           })
           .withFailureHandler(onFailure)
           .rejectShift(rowNumber, shiftId, APP_DATA.userInfo.name);
@@ -1846,7 +2401,8 @@
         document.getElementById('submit-button').disabled = true;
         document.getElementById('status-message').innerText = '送信中...';
 
-        const onSubmissionSuccess = message => {
+        const onSubmissionSuccess = response => {
+          const message = response && response.message ? response.message : response;
           // 1. Show success message and reset the form
           document.getElementById('status-message').innerText = message;
           document.getElementById('submit-button').disabled = false;
@@ -1860,11 +2416,36 @@
             document.getElementById('submit-button').innerText = '申請する';
           }
 
-          // 2. Reload all data. onInitialDataLoaded will handle re-rendering the list.
-          google.script.run
-            .withSuccessHandler(onInitialDataLoaded)
-            .withFailureHandler(onFailure)
-            .getInitialDataForUser(APP_DATA.userInfo.name);
+          if (response && response.shift) {
+            APP_DATA.myShiftRequests = APP_DATA.myShiftRequests || [];
+            const index = APP_DATA.myShiftRequests.findIndex(
+              req => req.shiftId === response.shift.shiftId
+            );
+            if (index >= 0) {
+              APP_DATA.myShiftRequests[index] = {
+                ...APP_DATA.myShiftRequests[index],
+                ...response.shift,
+              };
+            } else {
+              APP_DATA.myShiftRequests.push(response.shift);
+            }
+            renderMyShiftRequests(APP_DATA.myShiftRequests);
+
+            if (APP_DATA.allShifts) {
+              const adminIndex = APP_DATA.allShifts.findIndex(
+                shift => shift.shiftId === response.shift.shiftId
+              );
+              if (adminIndex >= 0) {
+                APP_DATA.allShifts[adminIndex] = {
+                  ...APP_DATA.allShifts[adminIndex],
+                  ...response.shift,
+                };
+              } else {
+                APP_DATA.allShifts.push(response.shift);
+              }
+              renderAdminShifts();
+            }
+          }
         };
 
         google.script.run
@@ -2018,7 +2599,8 @@
         document.getElementById('wi-status-message').innerText = '送信中...';
 
         google.script.run
-          .withSuccessHandler(function (message) {
+          .withSuccessHandler(function (response) {
+            const message = response && response.message ? response.message : response;
             // Briefly show success on the form page, then switch.
             document.getElementById('wi-status-message').innerText = message;
             document.getElementById('work-instruction-form').reset();
@@ -2027,7 +2609,13 @@
 
             setTimeout(() => {
               document.getElementById('wi-status-message').innerText = '';
-              reloadDataAndSwitchToCalendar(); // No need for another alert
+              showView('calendar-view');
+              if (response && response.workInstruction) {
+                addInstructionEventToCalendar(response.workInstruction);
+                setCachedScheduleDetails(response.workInstruction.workId, response.workInstruction);
+              } else {
+                reloadDataAndSwitchToCalendar(); // fallback
+              }
             }, 1000); // 1 second delay to see the message
           })
           .withFailureHandler(function (error) {
@@ -2210,9 +2798,13 @@
         document.getElementById('global-loader').style.display = 'flex';
         document.getElementById('global-loader').innerText = 'カレンダーを更新中...';
         google.script.run
-          .withSuccessHandler(onInitialDataLoaded)
+          .withSuccessHandler(function (events) {
+            APP_DATA.calendarEvents = events || [];
+            renderCalendarEvents(APP_DATA.calendarEvents);
+            document.getElementById('global-loader').style.display = 'none';
+          })
           .withFailureHandler(onFailure)
-          .getInitialDataForUser(APP_DATA.userInfo.name);
+          .getCalendarEventsOnly();
       }
 
       // 汎用成功ハンドラ

@@ -37,13 +37,22 @@ function getAllWorkInstructionsInternal(workInstructionSheet) {
     if (!sheet || sheet.getLastRow() < 2) {
       return [];
     }
-    const dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8); // A-H
+    const dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9); // A-I
     const values = dataRange.getValues();
     const allWorkInstructions = [];
 
     for (let i = 0; i < values.length; i++) {
-      let [targetDate, startTime, endTime, category, otherDesc, memo, creatorName, workId] =
-        values[i];
+      let [
+        targetDate,
+        startTime,
+        endTime,
+        category,
+        otherDesc,
+        memo,
+        creatorName,
+        workId,
+        cancelFlag,
+      ] = values[i];
 
       // Ensure time values are strings, as Google Sheets can return them as Date objects
       if (startTime instanceof Date) {
@@ -62,6 +71,7 @@ function getAllWorkInstructionsInternal(workInstructionSheet) {
         otherDescription: otherDesc,
         memo: memo,
         creatorName: creatorName,
+        isCancelled: cancelFlag === '中止',
       });
     }
     return allWorkInstructions;
@@ -102,6 +112,170 @@ function getAllDailyReportsInternal(dailyReportSheet) {
 }
 
 // ----------------------------------------
+// サーバーサイド関数 (詳細取得・軽量化向け)
+// ----------------------------------------
+
+function getShiftDetailsBundle(shiftId) {
+  try {
+    if (!shiftId) {
+      throw new Error('シフトIDが指定されていません。');
+    }
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const shiftSheet = ss.getSheetByName(SHEET_SHIFT);
+    const dailyReportSheet = ss.getSheetByName(SHEET_DAILY_REPORT);
+
+    const shiftInfo = getShiftByIdInternal(shiftId, shiftSheet);
+    if (!shiftInfo) {
+      return null;
+    }
+
+    const dailyReport = getDailyReportByInternAndDateInternal(
+      shiftInfo.internName,
+      shiftInfo.hopeDate,
+      dailyReportSheet
+    );
+
+    return { shiftInfo: shiftInfo, dailyReport: dailyReport };
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('シフト詳細の取得に失敗しました: ' + e.message);
+  }
+}
+
+function getWorkInstructionById(workId) {
+  try {
+    if (!workId) {
+      throw new Error('予定IDが指定されていません。');
+    }
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(SHEET_WORK_INSTRUCTION);
+    if (!sheet || sheet.getLastRow() < 2) {
+      return null;
+    }
+
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues(); // A-I
+    for (let i = 0; i < values.length; i++) {
+      let [
+        targetDate,
+        startTime,
+        endTime,
+        category,
+        otherDesc,
+        memo,
+        creatorName,
+        currentWorkId,
+        cancelFlag,
+      ] = values[i];
+      if (currentWorkId !== workId) {
+        continue;
+      }
+
+      if (startTime instanceof Date) {
+        startTime = Utilities.formatDate(startTime, 'JST', 'HH:mm');
+      }
+      if (endTime instanceof Date) {
+        endTime = Utilities.formatDate(endTime, 'JST', 'HH:mm');
+      }
+
+      return {
+        workId: currentWorkId,
+        date: Utilities.formatDate(new Date(targetDate), 'JST', 'yyyy/MM/dd'),
+        startTime: startTime,
+        endTime: endTime,
+        category: category,
+        otherDescription: otherDesc,
+        memo: memo,
+        creatorName: creatorName,
+        isCancelled: cancelFlag === '中止',
+      };
+    }
+
+    return null;
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('予定詳細の取得に失敗しました: ' + e.message);
+  }
+}
+
+function getShiftByIdInternal(shiftId, shiftSheet) {
+  try {
+    const sheet = shiftSheet;
+    if (!sheet || sheet.getLastRow() < 2) {
+      return null;
+    }
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 13).getValues(); // A-M
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      if (row[8] !== shiftId) {
+        continue;
+      }
+
+      let startTime = row[3];
+      let endTime = row[4];
+      if (startTime instanceof Date) {
+        startTime = Utilities.formatDate(startTime, 'JST', 'HH:mm');
+      }
+      if (endTime instanceof Date) {
+        endTime = Utilities.formatDate(endTime, 'JST', 'HH:mm');
+      }
+
+      return {
+        rowNumber: i + 2,
+        shiftId: row[8],
+        applyDate: Utilities.formatDate(new Date(row[0]), 'JST', 'yyyy/MM/dd'),
+        internName: row[1],
+        hopeDate: Utilities.formatDate(new Date(row[2]), 'JST', 'yyyy/MM/dd'),
+        startTime: startTime,
+        endTime: endTime,
+        status: row[5],
+        workInstructionText: row[9] || '',
+        workInstructionCreator: row[10] || '',
+        workInstructionUpdated: row[11]
+          ? Utilities.formatDate(new Date(row[11]), 'JST', 'yyyy/MM/dd HH:mm')
+          : '',
+        isCancelled: row[12] === '中止',
+      };
+    }
+    return null;
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('シフト詳細の取得に失敗しました: ' + e.message);
+  }
+}
+
+function getDailyReportByInternAndDateInternal(internName, attendanceDate, dailyReportSheet) {
+  try {
+    const sheet = dailyReportSheet;
+    if (!sheet || sheet.getLastRow() < 2) {
+      return null;
+    }
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues(); // A-H
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      const currentInternName = row[0];
+      const currentDate = Utilities.formatDate(new Date(row[1]), 'JST', 'yyyy/MM/dd');
+      if (currentInternName !== internName || currentDate !== attendanceDate) {
+        continue;
+      }
+      return {
+        internName: row[0],
+        attendanceDate: currentDate,
+        satisfaction: row[2],
+        workContent: row[3],
+        impression: row[4],
+        managerFeedback: row[5],
+        feedbackGiverName: row[6],
+        reportId: row[7],
+      };
+    }
+    return null;
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('日報詳細の取得に失敗しました: ' + e.message);
+  }
+}
+
+// ----------------------------------------
 // サーバーサイド関数 (初期データ取得)
 // ----------------------------------------
 function getInitialDataForUser(userName) {
@@ -137,11 +311,11 @@ function getInitialDataForUser(userName) {
       dailyReportsForManager: [],
     };
 
-    // Fetch data that EVERYONE needs
+    // Fetch data that EVERYONE needs (keep payload small)
     data.calendarEvents = getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet);
-    data.allWorkInstructions = getAllWorkInstructionsInternal(workInstructionSheet);
-    data.allDailyReports = getAllDailyReportsInternal(dailyReportSheet);
-    data.allShifts = getAllShiftsInternal(shiftSheet); // Fetched for all users for modal lookups
+    data.allWorkInstructions = [];
+    data.allDailyReports = [];
+    data.allShifts = [];
 
     // Fetch role-specific data
     if (userInfo.role === 'インターン生') {
@@ -152,8 +326,9 @@ function getInitialDataForUser(userName) {
       );
     } else if (userInfo.role === '採用担当' || userInfo.role === 'Dooox') {
       // Manager-specific data
-      data.allInternNames = getAllInternNamesInternal(userSheet);
-      data.dailyReportsForManager = getDailyReportsForManagerInternal(dailyReportSheet);
+      data.allShifts = [];
+      data.allInternNames = [];
+      data.dailyReportsForManager = [];
       // ALSO get personal data for testing purposes
       data.myShiftRequests = getMyShiftRequestsInternal(userInfo.name, shiftSheet);
       data.dailyReportsForIntern = getDailyReportsForInternInternal(
@@ -166,6 +341,70 @@ function getInitialDataForUser(userName) {
   } catch (e) {
     Logger.log(e);
     throw new Error('初期データの取得に失敗しました: ' + e.message);
+  }
+}
+
+// ----------------------------------------
+// サーバーサイド関数 (管理画面データ取得)
+// ----------------------------------------
+function getAdminShiftData(userName) {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const shiftSheet = ss.getSheetByName(SHEET_SHIFT);
+    const userInfo = getUserInfoByName(userName, userSheet);
+
+    if (!userInfo || (userInfo.role !== '採用担当' && userInfo.role !== 'Dooox')) {
+      throw new Error('この操作を行う権限がありません。');
+    }
+
+    return {
+      allShifts: getAllShiftsInternal(shiftSheet),
+      allInternNames: getAllInternNamesInternal(userSheet),
+    };
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('管理画面データの取得に失敗しました: ' + e.message);
+  }
+}
+
+function getDailyReportManagementData(userName) {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const dailyReportSheet = ss.getSheetByName(SHEET_DAILY_REPORT);
+    const userInfo = getUserInfoByName(userName, userSheet);
+
+    if (!userInfo || (userInfo.role !== '採用担当' && userInfo.role !== 'Dooox')) {
+      throw new Error('この操作を行う権限がありません。');
+    }
+
+    return {
+      dailyReportsForManager: getDailyReportsForManagerInternal(dailyReportSheet),
+      allInternNames: getAllInternNamesInternal(userSheet),
+    };
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('日報管理データの取得に失敗しました: ' + e.message);
+  }
+}
+
+// ----------------------------------------
+// サーバーサイド関数 (カレンダーのみ再取得)
+// ----------------------------------------
+function getCalendarEventsOnly() {
+  try {
+    internColors = {};
+    colorIndex = 0;
+
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const shiftSheet = ss.getSheetByName(SHEET_SHIFT);
+    const workInstructionSheet = ss.getSheetByName(SHEET_WORK_INSTRUCTION);
+
+    return getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet);
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('カレンダー更新に失敗しました: ' + e.message);
   }
 }
 
@@ -224,7 +463,18 @@ function submitShiftRequest(formData, userName) {
           sheet.getRange(rowNumber, 8).setValue(updatedHistory);
 
           SpreadsheetApp.flush();
-          return 'シフト申請を変更しました。';
+          return {
+            message: 'シフト申請を変更しました。',
+            shift: {
+              shiftId: formData.shiftId,
+              applyDate: Utilities.formatDate(new Date(data[i][0]), 'JST', 'yyyy/MM/dd'),
+              internName: internName,
+              hopeDate: Utilities.formatDate(newHopeDate, 'JST', 'yyyy/MM/dd'),
+              startTime: newStartTime,
+              endTime: newEndTime,
+              status: '希望中',
+            },
+          };
         }
       }
       throw new Error('変更するシフトが見つかりませんでした。');
@@ -249,7 +499,18 @@ function submitShiftRequest(formData, userName) {
       sheet.appendRow(newRow);
 
       SpreadsheetApp.flush();
-      return 'シフト希望を申請しました。';
+      return {
+        message: 'シフト希望を申請しました。',
+        shift: {
+          shiftId: uniqueId,
+          applyDate: Utilities.formatDate(applyDate, 'JST', 'yyyy/MM/dd'),
+          internName: internName,
+          hopeDate: Utilities.formatDate(newHopeDate, 'JST', 'yyyy/MM/dd'),
+          startTime: newStartTime,
+          endTime: newEndTime,
+          status: status,
+        },
+      };
     }
   } catch (e) {
     Logger.log(e);
@@ -382,7 +643,19 @@ function submitWorkInstruction(formData, userName) {
 
     sheet.appendRow(newRow);
 
-    return '予定を作成しました。';
+    return {
+      message: '予定を作成しました。',
+      workInstruction: {
+        workId: uniqueId,
+        date: Utilities.formatDate(new Date(formData.targetDate), 'JST', 'yyyy/MM/dd'),
+        startTime: formData.startTime,
+        endTime: formData.endTime,
+        category: formData.workCategory,
+        otherDescription: formData.otherDescription || '',
+        memo: formData.memo || '',
+        creatorName: userInfo.name,
+      },
+    };
   } catch (e) {
     Logger.log(e);
     throw new Error('予定の作成に失敗しました：' + e.message);
@@ -630,7 +903,7 @@ function getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet) {
     // 1. Get Shift Events
     const sheet = shiftSheet;
     if (sheet && sheet.getLastRow() >= 2) {
-      const shiftValues = sheet.getRange(2, 1, sheet.getLastRow() - 1, 12).getValues(); // A-L
+      const shiftValues = sheet.getRange(2, 1, sheet.getLastRow() - 1, 13).getValues(); // A-M
       for (const row of shiftValues) {
         const [
           applyDate,
@@ -643,6 +916,9 @@ function getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet) {
           ,
           shiftId,
           workInstructionText,
+          ,
+          ,
+          cancelFlag,
         ] = row;
         if (status === '確定' && internName && hopeDate && startTime && endTime) {
           const startDateTime = new Date(hopeDate);
@@ -666,6 +942,7 @@ function getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet) {
               internName: internName,
               workInstruction: workInstructionText || '',
               internColor: internColors[internName], // Add intern color
+              isCancelled: cancelFlag === '中止',
             },
           });
         }
@@ -676,10 +953,20 @@ function getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet) {
     const instructionSheet = workInstructionSheet;
     if (instructionSheet && instructionSheet.getLastRow() >= 2) {
       const instructionValues = instructionSheet
-        .getRange(2, 1, instructionSheet.getLastRow() - 1, 8)
+        .getRange(2, 1, instructionSheet.getLastRow() - 1, 9)
         .getValues(); // A-H
       for (const row of instructionValues) {
-        let [targetDate, startTime, endTime, category, otherDesc, memo, creatorName, workId] = row;
+        let [
+          targetDate,
+          startTime,
+          endTime,
+          category,
+          otherDesc,
+          memo,
+          creatorName,
+          workId,
+          cancelFlag,
+        ] = row;
         if (targetDate && category && startTime && endTime) {
           // Ensure time values are strings, as Google Sheets can return them as Date objects
           if (startTime instanceof Date) {
@@ -709,6 +996,7 @@ function getCalendarEventsInternal(ss, shiftSheet, workInstructionSheet) {
               category: category,
               formattedStartTime: Utilities.formatDate(startDateTime, 'JST', 'HH:mm'),
               formattedEndTime: Utilities.formatDate(endDateTime, 'JST', 'HH:mm'),
+              isCancelled: cancelFlag === '中止',
             },
           });
         }
@@ -800,6 +1088,138 @@ function deleteSchedule(workId) {
 }
 
 // ----------------------------------------
+// サーバーサイド関数 (中止フラグ)
+// ----------------------------------------
+
+function cancelShift(shiftId, userName) {
+  try {
+    if (!shiftId) {
+      throw new Error('シフトIDが指定されていません。');
+    }
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const userInfo = getUserInfoByName(userName, userSheet);
+    if (!userInfo) {
+      throw new Error('ユーザー情報が取得できません。');
+    }
+
+    const sheet = ss.getSheetByName(SHEET_SHIFT);
+    if (!sheet || sheet.getLastRow() < 2) {
+      throw new Error('シフトシートが見つかりません。');
+    }
+
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 13).getValues(); // A-M
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      if (row[8] === shiftId) {
+        sheet.getRange(i + 2, 13).setValue('中止'); // M列
+        return '中止しました。';
+      }
+    }
+    throw new Error('対象のシフトが見つかりません。');
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('中止に失敗しました: ' + e.message);
+  }
+}
+
+function cancelWorkInstruction(workId, userName) {
+  try {
+    if (!workId) {
+      throw new Error('予定IDが指定されていません。');
+    }
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const userInfo = getUserInfoByName(userName, userSheet);
+    if (!userInfo) {
+      throw new Error('ユーザー情報が取得できません。');
+    }
+
+    const sheet = ss.getSheetByName(SHEET_WORK_INSTRUCTION);
+    if (!sheet || sheet.getLastRow() < 2) {
+      throw new Error('業務指示シートが見つかりません。');
+    }
+
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues(); // A-I
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      if (row[7] === workId) {
+        sheet.getRange(i + 2, 9).setValue('中止'); // I列
+        return '中止しました。';
+      }
+    }
+    throw new Error('対象の予定が見つかりません。');
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('中止に失敗しました: ' + e.message);
+  }
+}
+
+function uncancelShift(shiftId, userName) {
+  try {
+    if (!shiftId) {
+      throw new Error('シフトIDが指定されていません。');
+    }
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const userInfo = getUserInfoByName(userName, userSheet);
+    if (!userInfo) {
+      throw new Error('ユーザー情報が取得できません。');
+    }
+
+    const sheet = ss.getSheetByName(SHEET_SHIFT);
+    if (!sheet || sheet.getLastRow() < 2) {
+      throw new Error('シフトシートが見つかりません。');
+    }
+
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 13).getValues(); // A-M
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      if (row[8] === shiftId) {
+        sheet.getRange(i + 2, 13).setValue(''); // M列
+        return '中止を解除しました。';
+      }
+    }
+    throw new Error('対象のシフトが見つかりません。');
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('中止解除に失敗しました: ' + e.message);
+  }
+}
+
+function uncancelWorkInstruction(workId, userName) {
+  try {
+    if (!workId) {
+      throw new Error('予定IDが指定されていません。');
+    }
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const userInfo = getUserInfoByName(userName, userSheet);
+    if (!userInfo) {
+      throw new Error('ユーザー情報が取得できません。');
+    }
+
+    const sheet = ss.getSheetByName(SHEET_WORK_INSTRUCTION);
+    if (!sheet || sheet.getLastRow() < 2) {
+      throw new Error('業務指示シートが見つかりません。');
+    }
+
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues(); // A-I
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      if (row[7] === workId) {
+        sheet.getRange(i + 2, 9).setValue(''); // I列
+        return '中止を解除しました。';
+      }
+    }
+    throw new Error('対象の予定が見つかりません。');
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('中止解除に失敗しました: ' + e.message);
+  }
+}
+
+// ----------------------------------------
 // サーバーサイド関数 (管理者用)
 // ----------------------------------------
 
@@ -811,7 +1231,7 @@ function getAllShiftsInternal(shiftSheet) {
       return [];
     }
 
-    const dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, 12); // I列(9) -> L列(12)まで取得
+    const dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, 13); // A-M
     const values = dataRange.getValues();
     const allShifts = [];
 
@@ -844,6 +1264,7 @@ function getAllShiftsInternal(shiftSheet) {
         workInstructionUpdated: row[11]
           ? Utilities.formatDate(new Date(row[11]), 'JST', 'yyyy/MM/dd HH:mm')
           : '', // L列: 更新日時
+        isCancelled: row[12] === '中止', // M列: 中止フラグ
       });
     }
     return allShifts;
@@ -945,7 +1366,17 @@ function adminCreateShift(formData, userName) {
 
     sheet.appendRow(newRow);
     SpreadsheetApp.flush();
-    return '新規シフトを作成しました。';
+    return {
+      message: '新規シフトを作成しました。',
+      shift: {
+        shiftId: uniqueId,
+        internName: formData.internName,
+        hopeDate: Utilities.formatDate(new Date(formData.hopeDate), 'JST', 'yyyy/MM/dd'),
+        startTime: formData.startTime,
+        endTime: formData.endTime,
+        status: formData.status,
+      },
+    };
   } catch (e) {
     Logger.log(e);
     throw new Error('シフトの作成に失敗しました: ' + e.message);
