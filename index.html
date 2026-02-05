@@ -293,9 +293,29 @@
         display: flex;
         justify-content: center;
         align-items: center;
+        flex-direction: column;
+        gap: 16px;
         font-size: 1.2em;
         font-weight: bold;
         color: #333;
+      }
+      .roulette {
+        display: flex;
+        gap: 6px;
+        font-weight: 800;
+        font-size: 36px;
+        letter-spacing: 2px;
+        color: #5e99fb;
+      }
+      .roulette span {
+        width: 28px;
+        text-align: center;
+        display: inline-block;
+      }
+      .loading-text {
+        color: #5e99fb;
+        font-weight: 700;
+        letter-spacing: 1px;
       }
     </style>
 
@@ -322,9 +342,77 @@
       <p id="login-status" style="margin-top: 15px; color: red"></p>
     </div>
 
-    <div id="global-loader" style="display: none">読み込み中...</div>
+    <div id="global-loader" style="display: none">
+      <div class="roulette" id="roulette">
+        <span>P</span>
+        <span>A</span>
+        <span>S</span>
+        <span>S</span>
+        <span>C</span>
+      </div>
+      <div class="loading-text">読み込み中...</div>
+    </div>
     <script>
       // User info will be populated in APP_DATA.userInfo
+      const rouletteChars = 'PASSC';
+      const charPool = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      let rouletteTimer = null;
+
+      function startRoulette() {
+        const roulette = document.getElementById('roulette');
+        if (!roulette) return;
+        const slots = roulette.querySelectorAll('span');
+        let tick = 0;
+        rouletteTimer = setInterval(() => {
+          slots.forEach((slot, index) => {
+            const stopAt = 10 + index * 3;
+            if (tick >= stopAt) {
+              slot.textContent = rouletteChars[index];
+            } else {
+              const randIndex = Math.floor(Math.random() * charPool.length);
+              slot.textContent = charPool[randIndex];
+            }
+          });
+          tick += 1;
+        }, 70);
+      }
+
+      function stopRoulette() {
+        if (rouletteTimer) {
+          clearInterval(rouletteTimer);
+          rouletteTimer = null;
+        }
+        const roulette = document.getElementById('roulette');
+        if (!roulette) return;
+        const slots = roulette.querySelectorAll('span');
+        slots.forEach((slot, index) => {
+          slot.textContent = rouletteChars[index];
+        });
+      }
+
+      function setGlobalLoaderText(message) {
+        const loader = document.getElementById('global-loader');
+        if (!loader) return;
+        const text = loader.querySelector('.loading-text');
+        if (text) {
+          text.textContent = message || '読み込み中...';
+        }
+      }
+
+      function showGlobalLoader(message) {
+        setGlobalLoaderText(message);
+        const loader = document.getElementById('global-loader');
+        if (!loader) return;
+        loader.style.display = 'flex';
+        startRoulette();
+      }
+
+      function hideGlobalLoader() {
+        const loader = document.getElementById('global-loader');
+        if (!loader) return;
+        loader.style.display = 'none';
+        stopRoulette();
+      }
       const detailCache = { shift: {}, instruction: {} };
 
       function getCachedShiftDetails(shiftId) {
@@ -462,6 +550,7 @@
           <button id="show-create-shift-modal-btn" style="margin-bottom: 15px">
             ＋ 新規シフト作成
           </button>
+          <button id="admin-refresh-btn" style="margin-left: 10px">読み込み</button>
           <label for="admin-month-selector">月を選択:</label>
           <select id="admin-month-selector"></select>
           <div id="admin-status-filters" style="margin-top: 10px">
@@ -1078,6 +1167,11 @@
                 dr.internName === shiftInfo.internName && dr.attendanceDate === shiftInfo.hopeDate
             );
 
+            if (!dailyReport) {
+              fetchShiftDetails(props.shiftId);
+              return;
+            }
+
             onShiftDetailsLoaded({ shiftInfo, dailyReport });
           } else if (props.type === 'instruction') {
             document.getElementById('modal-schedule-details').style.display = 'block';
@@ -1426,11 +1520,10 @@
         if (!confirm('中止を解除しますか？')) {
           return;
         }
-        document.getElementById('global-loader').style.display = 'flex';
-        document.getElementById('global-loader').innerText = '中止解除中...';
+        showGlobalLoader('中止解除中...');
         google.script.run
           .withSuccessHandler(function (message) {
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
             if (activeCalendarEvent) {
               activeCalendarEvent.setExtendedProp('isCancelled', false);
             }
@@ -1443,7 +1536,7 @@
             alert(message);
           })
           .withFailureHandler(function (error) {
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
             alert('中止解除に失敗しました: ' + error.message);
           })
           .uncancelShift(shiftId, APP_DATA.userInfo.name);
@@ -1453,11 +1546,10 @@
         if (!confirm('中止を解除しますか？')) {
           return;
         }
-        document.getElementById('global-loader').style.display = 'flex';
-        document.getElementById('global-loader').innerText = '中止解除中...';
+        showGlobalLoader('中止解除中...');
         google.script.run
           .withSuccessHandler(function (message) {
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
             if (activeCalendarEvent) {
               activeCalendarEvent.setExtendedProp('isCancelled', false);
             }
@@ -1470,7 +1562,7 @@
             alert(message);
           })
           .withFailureHandler(function (error) {
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
             alert('中止解除に失敗しました: ' + error.message);
           })
           .uncancelWorkInstruction(workId, APP_DATA.userInfo.name);
@@ -1806,11 +1898,10 @@
           onShiftDetailsLoaded(cached);
           return;
         }
-        document.getElementById('global-loader').style.display = 'flex';
-        document.getElementById('global-loader').innerText = '詳細を取得中...';
+        showGlobalLoader('詳細を取得中...');
         google.script.run
           .withSuccessHandler(function (details) {
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
             if (!details || !details.shiftInfo) {
               alert('シフト詳細が見つかりませんでした。');
               closeModal();
@@ -1838,7 +1929,7 @@
             onShiftDetailsLoaded(details);
           })
           .withFailureHandler(function (error) {
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
             alert('詳細の取得に失敗しました: ' + error.message);
             closeModal();
           })
@@ -1851,11 +1942,10 @@
           onScheduleDetailsLoaded(cached);
           return;
         }
-        document.getElementById('global-loader').style.display = 'flex';
-        document.getElementById('global-loader').innerText = '詳細を取得中...';
+        showGlobalLoader('詳細を取得中...');
         google.script.run
           .withSuccessHandler(function (details) {
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
             if (!details) {
               alert('予定詳細が見つかりませんでした。');
               closeModal();
@@ -1874,7 +1964,7 @@
             onScheduleDetailsLoaded(details);
           })
           .withFailureHandler(function (error) {
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
             alert('詳細の取得に失敗しました: ' + error.message);
             closeModal();
           })
@@ -1952,11 +2042,10 @@
             alert('予定IDが見つかりません。');
             return;
           }
-          document.getElementById('global-loader').style.display = 'flex';
-          document.getElementById('global-loader').innerText = '中止中...';
+          showGlobalLoader('中止中...');
           google.script.run
             .withSuccessHandler(function (message) {
-              document.getElementById('global-loader').style.display = 'none';
+              hideGlobalLoader();
               activeCalendarEvent.setExtendedProp('isCancelled', true);
               const cached = getCachedScheduleDetails(workId);
               if (cached) {
@@ -1967,7 +2056,7 @@
               alert(message);
             })
             .withFailureHandler(function (error) {
-              document.getElementById('global-loader').style.display = 'none';
+              hideGlobalLoader();
               alert('中止に失敗しました: ' + error.message);
             })
             .cancelWorkInstruction(workId, APP_DATA.userInfo.name);
@@ -1982,11 +2071,10 @@
             alert('シフトIDが見つかりません。');
             return;
           }
-          document.getElementById('global-loader').style.display = 'flex';
-          document.getElementById('global-loader').innerText = '中止中...';
+          showGlobalLoader('中止中...');
           google.script.run
             .withSuccessHandler(function (message) {
-              document.getElementById('global-loader').style.display = 'none';
+              hideGlobalLoader();
               activeCalendarEvent.setExtendedProp('isCancelled', true);
               const cached = getCachedShiftDetails(shiftId);
               if (cached && cached.shiftInfo) {
@@ -1997,7 +2085,7 @@
               alert(message);
             })
             .withFailureHandler(function (error) {
-              document.getElementById('global-loader').style.display = 'none';
+              hideGlobalLoader();
               alert('中止に失敗しました: ' + error.message);
             })
             .cancelShift(shiftId, APP_DATA.userInfo.name);
@@ -2030,6 +2118,7 @@
         calendar.render(); // Render the calendar frame immediately
 
         // ログイン用のユーザーリストを取得
+        showGlobalLoader('ログイン準備中...');
         google.script.run
           .withSuccessHandler(onUsersLoaded)
           .withFailureHandler(onFailure)
@@ -2039,6 +2128,7 @@
       function onUsersLoaded(response) {
         const userSelect = document.getElementById('user-select');
         if (!userSelect) {
+          hideGlobalLoader();
           return;
         }
 
@@ -2048,6 +2138,7 @@
           document.getElementById('login-status').textContent = message;
           userSelect.innerHTML = '<option value="">エラーまたは警告</option>';
           alert(`【ユーザー取得デバッグ情報】\n${message}`); // Force alert for debug info
+          hideGlobalLoader();
           return;
         }
 
@@ -2067,6 +2158,7 @@
           document.getElementById('login-status').textContent =
             'ユーザーが見つかりませんでした。スプレッドシートをご確認ください。';
         }
+        hideGlobalLoader();
       }
 
       function handleLogin() {
@@ -2077,7 +2169,7 @@
         }
 
         document.getElementById('login-view').style.display = 'none';
-        document.getElementById('global-loader').style.display = 'flex';
+        showGlobalLoader('ログイン中...');
 
         google.script.run
           .withSuccessHandler(onLoginSuccess)
@@ -2114,14 +2206,14 @@
 
       function onLoginFailure(error) {
         document.getElementById('login-view').style.display = 'block';
-        document.getElementById('global-loader').style.display = 'none';
+        hideGlobalLoader();
         document.getElementById('login-status').textContent =
           'ログインに失敗しました: ' + error.message;
       }
 
       function onInitialDataLoaded(data) {
         APP_DATA = data;
-        document.getElementById('global-loader').style.display = 'none'; // Hide loader
+        hideGlobalLoader(); // Hide loader
 
         // Re-render all key components that depend on the new data
         renderCalendarEvents(APP_DATA.calendarEvents);
@@ -2165,6 +2257,9 @@
       let dailyReportDataLoaded = false;
       let adminDataLoading = false;
       let dailyReportDataLoading = false;
+      function handleAdminManualRefresh() {
+        loadAdminDataAndRender({ showLoader: true, renderView: true, force: true });
+      }
 
       function loadAdminDataAndRender(options = {}) {
         const showLoader = options.showLoader !== false;
@@ -2179,13 +2274,12 @@
         }
         adminDataLoading = true;
         if (showLoader) {
-          document.getElementById('global-loader').style.display = 'flex';
-          document.getElementById('global-loader').innerText = 'シフト管理を読み込み中...';
+          showGlobalLoader('シフト管理を読み込み中...');
         }
         google.script.run
           .withSuccessHandler(function (data) {
             if (showLoader) {
-              document.getElementById('global-loader').style.display = 'none';
+              hideGlobalLoader();
             }
             APP_DATA.allShifts = data.allShifts || [];
             APP_DATA.allInternNames = data.allInternNames || [];
@@ -2197,7 +2291,7 @@
           })
           .withFailureHandler(function (error) {
             if (showLoader) {
-              document.getElementById('global-loader').style.display = 'none';
+              hideGlobalLoader();
             }
             adminDataLoading = false;
             alert('シフト管理の読み込みに失敗しました: ' + error.message);
@@ -2218,13 +2312,12 @@
         }
         dailyReportDataLoading = true;
         if (showLoader) {
-          document.getElementById('global-loader').style.display = 'flex';
-          document.getElementById('global-loader').innerText = '日報管理を読み込み中...';
+          showGlobalLoader('日報管理を読み込み中...');
         }
         google.script.run
           .withSuccessHandler(function (data) {
             if (showLoader) {
-              document.getElementById('global-loader').style.display = 'none';
+              hideGlobalLoader();
             }
             APP_DATA.dailyReportsForManager = data.dailyReportsForManager || [];
             APP_DATA.allInternNames = data.allInternNames || [];
@@ -2236,7 +2329,7 @@
           })
           .withFailureHandler(function (error) {
             if (showLoader) {
-              document.getElementById('global-loader').style.display = 'none';
+              hideGlobalLoader();
             }
             dailyReportDataLoading = false;
             alert('日報管理の読み込みに失敗しました: ' + error.message);
@@ -2254,6 +2347,7 @@
         const allShifts = APP_DATA.allShifts || [];
         const allInterns = APP_DATA.allInternNames || [];
         const monthSelector = document.getElementById('admin-month-selector');
+        const refreshBtn = document.getElementById('admin-refresh-btn');
 
         // Get unique months from all shifts
         const uniqueMonths = [...new Set(allShifts.map(s => s.hopeDate.substring(0, 7)))]
@@ -2313,6 +2407,10 @@
           .addEventListener('click', closeAdminCreateShiftModal);
 
         // --- END NEW LOGIC ---
+
+        if (refreshBtn) {
+          refreshBtn.onclick = handleAdminManualRefresh;
+        }
 
         // Add event listeners for filters
         monthSelector.addEventListener('change', function () {
@@ -2895,13 +2993,12 @@
           alert(successMessage);
         }
         showView('calendar-view');
-        document.getElementById('global-loader').style.display = 'flex';
-        document.getElementById('global-loader').innerText = 'カレンダーを更新中...';
+        showGlobalLoader('カレンダーを更新中...');
         google.script.run
           .withSuccessHandler(function (events) {
             APP_DATA.calendarEvents = events || [];
             renderCalendarEvents(APP_DATA.calendarEvents);
-            document.getElementById('global-loader').style.display = 'none';
+            hideGlobalLoader();
           })
           .withFailureHandler(onFailure)
           .getCalendarEventsOnly();
@@ -2946,7 +3043,7 @@
         const loader = document.getElementById('global-loader');
         if (loader.style.display !== 'none') {
           // If the initial load fails, show error in the global loader
-          loader.innerHTML = `エラーが発生しました: ${error.message}<br>管理者に連絡してください。`;
+          setGlobalLoaderText(`エラーが発生しました: ${error.message}`);
         } else {
           // If it fails after initial load, use alert or specific status elements
           alert('処理中にエラーが発生しました: ' + error.message);
