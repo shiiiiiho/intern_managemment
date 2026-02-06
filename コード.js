@@ -17,6 +17,8 @@ const SHEET_USER = 'ユーザーマスタ';
 const SHEET_SHIFT = 'シフト';
 const SHEET_WORK_INSTRUCTION = '業務指示';
 const SHEET_DAILY_REPORT = '日報';
+const SHEET_SETTINGS = '設定';
+const REMINDER_DEADLINE_CELL = 'B2';
 
 const COLOR_PALETTE = [
   '#FF6347',
@@ -30,6 +32,62 @@ const COLOR_PALETTE = [
 ];
 let internColors = {}; // To store internName -> color mapping
 let colorIndex = 0; // To cycle through COLOR_PALETTE
+
+function getUserRecords(userSheet) {
+  try {
+    const sheet = userSheet;
+    if (!sheet || sheet.getLastRow() < 2) {
+      return [];
+    }
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues(); // A-C
+    return values
+      .map(row => ({
+        name: row[0],
+        role: row[1] ? String(row[1]).trim() : '',
+        email: row[2] ? String(row[2]).trim() : '',
+      }))
+      .filter(row => row.name);
+  } catch (e) {
+    Logger.log('getUserRecords Error: ' + e.message);
+    return [];
+  }
+}
+
+function normalizeEmails(emailField) {
+  if (!emailField) return [];
+  return String(emailField)
+    .split(/[,\s;]+/)
+    .map(e => e.trim())
+    .filter(e => e);
+}
+
+function getEmailsByRoles(roles, userSheet) {
+  const records = getUserRecords(userSheet);
+  const roleSet = new Set(roles);
+  const emails = records
+    .filter(r => roleSet.has(r.role) && r.email)
+    .flatMap(r => normalizeEmails(r.email));
+  return [...new Set(emails)];
+}
+
+function getEmailByName(name, userSheet) {
+  const records = getUserRecords(userSheet);
+  const record = records.find(r => r.name === name);
+  return record && record.email ? normalizeEmails(record.email) : [];
+}
+
+function sendMailSafe({ to, bcc, subject, body }) {
+  try {
+    Logger.log(
+      'sendMailSafe: to=' + (to || '') + ' bcc=' + (bcc || '') + ' subject=' + (subject || '')
+    );
+    const mailOptions = {};
+    if (bcc) mailOptions.bcc = bcc;
+    MailApp.sendEmail(to || '', subject || '', body || '', mailOptions);
+  } catch (e) {
+    Logger.log('sendMailSafe Error: ' + e.message);
+  }
+}
 
 function getAllWorkInstructionsInternal(workInstructionSheet) {
   try {
@@ -463,6 +521,23 @@ function submitShiftRequest(formData, userName) {
           sheet.getRange(rowNumber, 8).setValue(updatedHistory);
 
           SpreadsheetApp.flush();
+          const managerEmails = getEmailsByRoles(['採用担当', 'Dooox'], userSheet);
+          Logger.log('N-01 notify managers (modify): ' + managerEmails.join(','));
+          if (managerEmails.length > 0) {
+            const subject = '【シフト申請変更】' + internName;
+            const body =
+              'シフト申請が変更されました。\n\n' +
+              '氏名: ' +
+              internName +
+              '\n希望日: ' +
+              Utilities.formatDate(newHopeDate, 'JST', 'yyyy/MM/dd') +
+              '\n希望時間: ' +
+              newStartTime +
+              '〜' +
+              newEndTime;
+            sendMailSafe({ to: managerEmails.join(','), subject: subject, body: body });
+          }
+          Logger.log('submitShiftRequest(modify) success shiftId=' + formData.shiftId);
           return {
             message: 'シフト申請を変更しました。',
             shift: {
@@ -499,6 +574,23 @@ function submitShiftRequest(formData, userName) {
       sheet.appendRow(newRow);
 
       SpreadsheetApp.flush();
+      const managerEmails = getEmailsByRoles(['採用担当', 'Dooox'], userSheet);
+      Logger.log('N-01 notify managers (new): ' + managerEmails.join(','));
+      if (managerEmails.length > 0) {
+        const subject = '【シフト申請】' + internName;
+        const body =
+          'シフト申請が提出されました。\n\n' +
+          '氏名: ' +
+          internName +
+          '\n希望日: ' +
+          Utilities.formatDate(newHopeDate, 'JST', 'yyyy/MM/dd') +
+          '\n希望時間: ' +
+          newStartTime +
+          '〜' +
+          newEndTime;
+        sendMailSafe({ to: managerEmails.join(','), subject: subject, body: body });
+      }
+      Logger.log('submitShiftRequest(new) success shiftId=' + uniqueId);
       return {
         message: 'シフト希望を申請しました。',
         shift: {
@@ -601,6 +693,18 @@ function submitReport(formData, userName) {
     ];
 
     sheet.appendRow(newRow);
+
+    const managerEmails = getEmailsByRoles(['採用担当', 'Dooox'], userSheet);
+    if (managerEmails.length > 0) {
+      const subject = '【日報提出】' + userInfo.name;
+      const body =
+        '日報が提出されました。\n\n' +
+        '氏名: ' +
+        userInfo.name +
+        '\n出勤日: ' +
+        Utilities.formatDate(new Date(formData.attendanceDate), 'JST', 'yyyy/MM/dd');
+      sendMailSafe({ to: managerEmails.join(','), subject: subject, body: body });
+    }
 
     return '日報を提出しました。';
   } catch (e) {
@@ -724,6 +828,19 @@ function submitFeedback(rowNumber, reportId, feedbackContent, userName) {
 
     sheet.getRange(rowNumber, 6).setValue(feedbackContent); // F列 (管理者フィードバック)
     sheet.getRange(rowNumber, 7).setValue(userInfo.name); // G列 (FB入力者名)
+
+    const internName = sheet.getRange(rowNumber, 1).getValue();
+    const internEmails = getEmailByName(internName, userSheet);
+    if (internEmails.length > 0) {
+      const subject = '【日報FB完了】' + internName;
+      const body =
+        '管理者からのフィードバックが登録されました。\n\n' +
+        '氏名: ' +
+        internName +
+        '\n管理者: ' +
+        userInfo.name;
+      sendMailSafe({ to: internEmails.join(','), subject: subject, body: body });
+    }
 
     return 'フィードバックを登録しました。';
   } catch (e) {
@@ -1312,6 +1429,35 @@ function updateShiftStatus(ss, sheet, rowNumber, shiftId, newStatus, updaterName
       : newHistoryEntry;
     sheet.getRange(rowNumber, 8).setValue(updatedHistory);
 
+    if (newStatus === '確定') {
+      const userSheet = ss.getSheetByName(SHEET_USER);
+      const internName = sheet.getRange(rowNumber, 2).getValue();
+      const internEmails = getEmailByName(internName, userSheet);
+      if (internEmails.length > 0) {
+        const hopeDate = sheet.getRange(rowNumber, 3).getValue();
+        const startTime = sheet.getRange(rowNumber, 4).getValue();
+        const endTime = sheet.getRange(rowNumber, 5).getValue();
+        const startText =
+          startTime instanceof Date ? Utilities.formatDate(startTime, 'JST', 'HH:mm') : startTime;
+        const endText =
+          endTime instanceof Date ? Utilities.formatDate(endTime, 'JST', 'HH:mm') : endTime;
+        const subject = '【シフト確定】' + internName;
+        const body =
+          'シフトが承認され確定しました。\n\n' +
+          '氏名: ' +
+          internName +
+          '\n希望日: ' +
+          Utilities.formatDate(new Date(hopeDate), 'JST', 'yyyy/MM/dd') +
+          '\n希望時間: ' +
+          startText +
+          '〜' +
+          endText +
+          '\n承認者: ' +
+          updaterName;
+        sendMailSafe({ to: internEmails.join(','), subject: subject, body: body });
+      }
+    }
+
     return `シフトを${actionType}しました。`;
   } catch (e) {
     Logger.log(e);
@@ -1528,4 +1674,65 @@ function updateDailyReport(reportId, formData, userName) {
     Logger.log(e);
     throw new Error('日報の更新に失敗しました: ' + e.message);
   }
+}
+
+// ----------------------------------------
+// サーバーサイド関数 (リマインド通知)
+// ----------------------------------------
+function sendShiftReminderIfNeeded() {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const settingsSheet = ss.getSheetByName(SHEET_SETTINGS);
+    if (!settingsSheet) {
+      Logger.log('設定シートが見つかりません: ' + SHEET_SETTINGS);
+      return;
+    }
+
+    const deadlineValue = settingsSheet.getRange(REMINDER_DEADLINE_CELL).getValue();
+    if (!deadlineValue || !(deadlineValue instanceof Date)) {
+      Logger.log('締切日が設定されていません。セル: ' + REMINDER_DEADLINE_CELL);
+      return;
+    }
+
+    const today = new Date();
+    const deadlineDate = new Date(deadlineValue);
+    const diffMs = deadlineDate.setHours(0, 0, 0, 0) - today.setHours(0, 0, 0, 0);
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    if (![15, 7, 3].includes(diffDays)) {
+      return;
+    }
+
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const internEmails = getEmailsByRoles(['インターン生'], userSheet);
+    if (internEmails.length === 0) {
+      Logger.log('インターン生のメールが取得できません。');
+      return;
+    }
+
+    const subject = '【シフト提出リマインド】締切まであと' + diffDays + '日';
+    const body =
+      'シフト提出の締切が近づいています。\n\n' +
+      '締切日: ' +
+      Utilities.formatDate(deadlineValue, 'JST', 'yyyy/MM/dd') +
+      '\n残日数: ' +
+      diffDays +
+      '日\n\n' +
+      '未提出の方は期日までに提出してください。';
+
+    sendMailSafe({ to: '', bcc: internEmails.join(','), subject: subject, body: body });
+  } catch (e) {
+    Logger.log('sendShiftReminderIfNeeded Error: ' + e.message);
+  }
+}
+
+// ----------------------------------------
+// 権限付与用（MailApp）
+// ----------------------------------------
+function authorizeMail() {
+  MailApp.sendEmail(
+    Session.getActiveUser().getEmail(),
+    'MailApp権限確認',
+    '権限付与のためのテスト送信です。'
+  );
 }

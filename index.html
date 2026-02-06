@@ -497,7 +497,10 @@
 
     <div id="calendar-view" class="view" style="display: none">
       <h1>シフトカレンダー</h1>
-      <p>（ステータスが「確定」のシフトのみ表示されます）</p>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+        <p style="margin: 0">（ステータスが「確定」のシフトのみ表示されます）</p>
+        <button type="button" id="calendar-refresh-btn">読み込み</button>
+      </div>
       <div id="calendar"></div>
     </div>
 
@@ -713,6 +716,9 @@
           <div>
             <label for="dr-intern-selector">インターン生を選択:</label>
             <select id="dr-intern-selector"></select>
+          </div>
+          <div style="display: flex; align-items: flex-end">
+            <button type="button" id="daily-report-refresh-btn">読み込み</button>
           </div>
         </div>
         <p id="daily-report-management-status"></p>
@@ -2193,6 +2199,7 @@
         // Now, call the main data handler function.
         // It will set the global APP_DATA, render the calendar, hide the loader, and show the initial view.
         onInitialDataLoaded(data);
+        handleCalendarManualRefresh();
 
         if (isManager) {
           loadAdminDataAndRender({ showLoader: false, renderView: false, force: true });
@@ -2201,6 +2208,7 @@
             renderView: false,
             force: true,
           });
+          handleDailyReportManualRefresh();
         }
       }
 
@@ -2432,6 +2440,14 @@
 
         renderAdminShifts(); // Initial render
       }
+
+      document.getElementById('calendar-refresh-btn').addEventListener('click', () => {
+        handleCalendarManualRefresh();
+      });
+
+      document.getElementById('daily-report-refresh-btn').addEventListener('click', () => {
+        handleDailyReportManualRefresh();
+      });
 
       function handleAdminCreateShiftSubmit(formObject) {
         const formData = {
@@ -3002,6 +3018,28 @@
           })
           .withFailureHandler(onFailure)
           .getCalendarEventsOnly();
+      }
+
+      function handleCalendarManualRefresh() {
+        showView('calendar-view');
+        showGlobalLoader('カレンダーを更新中...');
+        google.script.run
+          .withSuccessHandler(function (events) {
+            APP_DATA.calendarEvents = events || [];
+            renderCalendarEvents(APP_DATA.calendarEvents);
+            hideGlobalLoader();
+          })
+          .withFailureHandler(onFailure)
+          .getCalendarEventsOnly();
+      }
+
+      function handleDailyReportManualRefresh() {
+        loadDailyReportManagementDataAndRender({
+          showLoader: true,
+          renderView:
+            document.getElementById('daily-report-management-view').style.display === 'block',
+          force: true,
+        });
       }
 
       // 汎用成功ハンドラ
