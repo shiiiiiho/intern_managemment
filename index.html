@@ -2823,6 +2823,14 @@
             document.getElementById('submit-button').disabled = false;
           }, 15000);
 
+          if (!Array.isArray(pendingShiftRequests) || pendingShiftRequests.length === 0) {
+            clearTimeoutIfAny();
+            document.getElementById('status-message').innerText =
+              '申請予定がありません。「追加」でリストに入れてください。';
+            document.getElementById('submit-button').disabled = false;
+            return;
+          }
+
           if (pendingShiftRequests.length > 0) {
             if (typeof runner.submitShiftRequestsBatch === 'function') {
               runner.submitShiftRequestsBatch(pendingShiftRequests, APP_DATA.userInfo.name);

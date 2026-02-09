@@ -571,7 +571,8 @@ function submitShiftRequest(formData, userName) {
         uniqueId, // I: シフトID
       ];
 
-      sheet.appendRow(newRow);
+      const range = sheet.appendRow(newRow);
+      const rowNumber = range.getRow();
 
       SpreadsheetApp.flush();
       const managerEmails = getEmailsByRoles(['採用担当', 'Dooox'], userSheet);
@@ -595,6 +596,7 @@ function submitShiftRequest(formData, userName) {
         message: 'シフト希望を申請しました。',
         shift: {
           shiftId: uniqueId,
+          rowNumber: rowNumber,
           applyDate: Utilities.formatDate(applyDate, 'JST', 'yyyy/MM/dd'),
           internName: internName,
           hopeDate: Utilities.formatDate(newHopeDate, 'JST', 'yyyy/MM/dd'),
@@ -660,7 +662,7 @@ function submitShiftRequestsBatch(formDataList, userName) {
     Logger.log('Entering submitShiftRequestsBatch for user: ' + userName);
     Logger.log('Batch size: ' + (Array.isArray(formDataList) ? formDataList.length : 'invalid'));
     if (!Array.isArray(formDataList) || formDataList.length === 0) {
-      throw new Error('申請データがありません。');
+      return { message: '申請データがありません。', shifts: [] };
     }
 
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -700,9 +702,11 @@ function submitShiftRequestsBatch(formDataList, userName) {
         '', // H: 変更履歴
         uniqueId, // I: シフトID
       ];
-      sheet.appendRow(newRow);
+      const range = sheet.appendRow(newRow);
+      const rowNumber = range.getRow();
       shifts.push({
         shiftId: uniqueId,
+        rowNumber: rowNumber,
         applyDate: Utilities.formatDate(applyDate, 'JST', 'yyyy/MM/dd'),
         internName: internName,
         hopeDate: Utilities.formatDate(hopeDate, 'JST', 'yyyy/MM/dd'),
@@ -1513,34 +1517,43 @@ function updateShiftStatusInternal(
   sendEmail
 ) {
   try {
-    if (rowNumber > sheet.getLastRow() || rowNumber < 2) {
+    let targetRowNumber = rowNumber;
+    const lastRow = sheet.getLastRow();
+    if (!targetRowNumber || targetRowNumber < 2 || targetRowNumber > lastRow) {
+      targetRowNumber = findShiftRowById(sheet, shiftId);
+    }
+    if (!targetRowNumber) {
       throw new Error('指定されたシフトの行が見つかりません。');
     }
 
-    const existingShiftId = sheet.getRange(rowNumber, 9).getValue(); // I列
+    const existingShiftId = sheet.getRange(targetRowNumber, 9).getValue(); // I列
     if (existingShiftId !== shiftId) {
-      throw new Error('シフトIDが一致しません。不正な操作の可能性があります。');
+      const resolvedRowNumber = findShiftRowById(sheet, shiftId);
+      if (!resolvedRowNumber) {
+        throw new Error('シフトIDが一致しません。不正な操作の可能性があります。');
+      }
+      targetRowNumber = resolvedRowNumber;
     }
 
-    sheet.getRange(rowNumber, 6).setValue(newStatus); // F列 (ステータス)
-    sheet.getRange(rowNumber, 7).setValue(updaterName); // G列 (確定者名)
+    sheet.getRange(targetRowNumber, 6).setValue(newStatus); // F列 (ステータス)
+    sheet.getRange(targetRowNumber, 7).setValue(updaterName); // G列 (確定者名)
 
-    const currentHistory = sheet.getRange(rowNumber, 8).getValue(); // H列
+    const currentHistory = sheet.getRange(targetRowNumber, 8).getValue(); // H列
     const timestamp = Utilities.formatDate(new Date(), 'JST', 'yyyy/MM/dd HH:mm');
     const newHistoryEntry = `${timestamp} ${updaterName}が${actionType}`;
     const updatedHistory = currentHistory
       ? `${currentHistory}\n${newHistoryEntry}`
       : newHistoryEntry;
-    sheet.getRange(rowNumber, 8).setValue(updatedHistory);
+    sheet.getRange(targetRowNumber, 8).setValue(updatedHistory);
 
     if (sendEmail && newStatus === '確定') {
       const userSheet = ss.getSheetByName(SHEET_USER);
-      const internName = sheet.getRange(rowNumber, 2).getValue();
+      const internName = sheet.getRange(targetRowNumber, 2).getValue();
       const internEmails = getEmailByName(internName, userSheet);
       if (internEmails.length > 0) {
-        const hopeDate = sheet.getRange(rowNumber, 3).getValue();
-        const startTime = sheet.getRange(rowNumber, 4).getValue();
-        const endTime = sheet.getRange(rowNumber, 5).getValue();
+        const hopeDate = sheet.getRange(targetRowNumber, 3).getValue();
+        const startTime = sheet.getRange(targetRowNumber, 4).getValue();
+        const endTime = sheet.getRange(targetRowNumber, 5).getValue();
         const startText =
           startTime instanceof Date ? Utilities.formatDate(startTime, 'JST', 'HH:mm') : startTime;
         const endText =
@@ -1566,20 +1579,20 @@ function updateShiftStatusInternal(
       message: `シフトを${actionType}しました。`,
       shift: {
         shiftId: shiftId,
-        internName: sheet.getRange(rowNumber, 2).getValue(),
+        internName: sheet.getRange(targetRowNumber, 2).getValue(),
         hopeDate: Utilities.formatDate(
-          new Date(sheet.getRange(rowNumber, 3).getValue()),
+          new Date(sheet.getRange(targetRowNumber, 3).getValue()),
           'JST',
           'yyyy/MM/dd'
         ),
         startTime:
-          sheet.getRange(rowNumber, 4).getValue() instanceof Date
-            ? Utilities.formatDate(sheet.getRange(rowNumber, 4).getValue(), 'JST', 'HH:mm')
-            : sheet.getRange(rowNumber, 4).getValue(),
+          sheet.getRange(targetRowNumber, 4).getValue() instanceof Date
+            ? Utilities.formatDate(sheet.getRange(targetRowNumber, 4).getValue(), 'JST', 'HH:mm')
+            : sheet.getRange(targetRowNumber, 4).getValue(),
         endTime:
-          sheet.getRange(rowNumber, 5).getValue() instanceof Date
-            ? Utilities.formatDate(sheet.getRange(rowNumber, 5).getValue(), 'JST', 'HH:mm')
-            : sheet.getRange(rowNumber, 5).getValue(),
+          sheet.getRange(targetRowNumber, 5).getValue() instanceof Date
+            ? Utilities.formatDate(sheet.getRange(targetRowNumber, 5).getValue(), 'JST', 'HH:mm')
+            : sheet.getRange(targetRowNumber, 5).getValue(),
         status: newStatus,
       },
     };
@@ -1587,6 +1600,18 @@ function updateShiftStatusInternal(
     Logger.log(e);
     throw new Error(`シフトの${actionType}に失敗しました: ${e.message}`);
   }
+}
+
+function findShiftRowById(sheet, shiftId) {
+  if (!shiftId) return null;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const finder = sheet
+    .getRange(2, 9, lastRow - 1, 1)
+    .createTextFinder(shiftId)
+    .matchEntireCell(true)
+    .findNext();
+  return finder ? finder.getRow() : null;
 }
 
 function updateShiftsBatch(items, approverName) {
