@@ -571,8 +571,8 @@ function submitShiftRequest(formData, userName) {
         uniqueId, // I: シフトID
       ];
 
-      const range = sheet.appendRow(newRow);
-      const rowNumber = range.getRow();
+      sheet.appendRow(newRow);
+      const rowNumber = sheet.getLastRow();
 
       SpreadsheetApp.flush();
       const managerEmails = getEmailsByRoles(['採用担当', 'Dooox'], userSheet);
@@ -702,8 +702,8 @@ function submitShiftRequestsBatch(formDataList, userName) {
         '', // H: 変更履歴
         uniqueId, // I: シフトID
       ];
-      const range = sheet.appendRow(newRow);
-      const rowNumber = range.getRow();
+      sheet.appendRow(newRow);
+      const rowNumber = sheet.getLastRow();
       shifts.push({
         shiftId: uniqueId,
         rowNumber: rowNumber,
@@ -788,7 +788,13 @@ function submitReport(formData, userName) {
         '氏名: ' +
         userInfo.name +
         '\n出勤日: ' +
-        Utilities.formatDate(new Date(formData.attendanceDate), 'JST', 'yyyy/MM/dd');
+        Utilities.formatDate(new Date(formData.attendanceDate), 'JST', 'yyyy/MM/dd') +
+        '\n満足度: ' +
+        formData.satisfaction +
+        '\n業務内容: ' +
+        formData.workContent +
+        '\n所感・学び: ' +
+        formData.impression;
       sendMailSafe({ to: managerEmails.join(','), subject: subject, body: body });
     }
 
@@ -918,11 +924,25 @@ function submitFeedback(rowNumber, reportId, feedbackContent, userName) {
     const internName = sheet.getRange(rowNumber, 1).getValue();
     const internEmails = getEmailByName(internName, userSheet);
     if (internEmails.length > 0) {
+      const attendanceDate = sheet.getRange(rowNumber, 2).getValue();
+      const satisfaction = sheet.getRange(rowNumber, 3).getValue();
+      const workContent = sheet.getRange(rowNumber, 4).getValue();
+      const impression = sheet.getRange(rowNumber, 5).getValue();
       const subject = '【日報FB完了】' + internName;
       const body =
         '管理者からのフィードバックが登録されました。\n\n' +
         '氏名: ' +
         internName +
+        '\n出勤日: ' +
+        Utilities.formatDate(new Date(attendanceDate), 'JST', 'yyyy/MM/dd') +
+        '\n満足度: ' +
+        satisfaction +
+        '\n業務内容: ' +
+        workContent +
+        '\n所感・学び: ' +
+        impression +
+        '\n\n管理者FB: ' +
+        feedbackContent +
         '\n管理者: ' +
         userInfo.name;
       sendMailSafe({ to: internEmails.join(','), subject: subject, body: body });
@@ -1651,39 +1671,27 @@ function updateShiftsBatch(items, approverName) {
       }
     });
 
-    Object.keys(byInternApprove).forEach(internName => {
-      const emails = getEmailByName(internName, userSheet);
-      if (!emails || emails.length === 0) return;
-      const subject = '【シフト確定（一括）】' + internName;
-      const lines = byInternApprove[internName].map(
-        s => `${s.hopeDate} ${s.startTime}〜${s.endTime}`
-      );
-      const body =
-        'シフトが承認され確定しました。\n\n' +
-        '氏名: ' +
-        internName +
-        '\n件数: ' +
-        byInternApprove[internName].length +
-        '件\n\n' +
-        lines.join('\n') +
-        '\n承認者: ' +
-        approverName;
-      sendMailSafe({ to: emails.join(','), subject: subject, body: body });
-    });
+    const internNames = new Set([...Object.keys(byInternApprove), ...Object.keys(byInternReject)]);
 
-    Object.keys(byInternReject).forEach(internName => {
+    internNames.forEach(internName => {
       const emails = getEmailByName(internName, userSheet);
       if (!emails || emails.length === 0) return;
-      const subject = '【シフト棄却（一括）】' + internName;
-      const lines = byInternReject[internName].map(
-        s => `${s.hopeDate} ${s.startTime}〜${s.endTime}`
-      );
+      const approved = byInternApprove[internName] || [];
+      const rejected = byInternReject[internName] || [];
+      const subject = '【シフト結果（一括）】' + internName;
+      const lines = [];
+      approved.forEach(s => {
+        lines.push(`${s.hopeDate} ${s.startTime}〜${s.endTime} 承認`);
+      });
+      rejected.forEach(s => {
+        lines.push(`${s.hopeDate} ${s.startTime}〜${s.endTime} 棄却`);
+      });
       const body =
-        'シフトが棄却されました。\n\n' +
+        'シフト結果をお知らせします。\n\n' +
         '氏名: ' +
         internName +
         '\n件数: ' +
-        byInternReject[internName].length +
+        (approved.length + rejected.length) +
         '件\n\n' +
         lines.join('\n') +
         '\n処理者: ' +
