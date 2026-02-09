@@ -655,6 +655,88 @@ function getMyShiftRequestsInternal(internName, shiftSheet) {
   }
 }
 
+function submitShiftRequestsBatch(formDataList, userName) {
+  try {
+    Logger.log('Entering submitShiftRequestsBatch for user: ' + userName);
+    Logger.log('Batch size: ' + (Array.isArray(formDataList) ? formDataList.length : 'invalid'));
+    if (!Array.isArray(formDataList) || formDataList.length === 0) {
+      throw new Error('申請データがありません。');
+    }
+
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const userInfo = getUserInfoByName(userName, userSheet);
+
+    if (!userInfo || (userInfo.role === 'guest' && userInfo.role !== 'Dooox')) {
+      throw new Error('ユーザーマスタにあなたのアカウント(' + userName + ')が登録されていません。');
+    }
+
+    const sheet = ss.getSheetByName(SHEET_SHIFT);
+    if (!sheet) {
+      throw new Error('シート名「' + SHEET_SHIFT + '」が見つかりません。');
+    }
+
+    const internName = userInfo.name;
+    const applyDate = new Date();
+    const status = '希望中';
+    const shifts = [];
+
+    formDataList.forEach(item => {
+      const hopeDate = new Date(item.hopeDate);
+      const startTime = item.startTime;
+      const endTime = item.endTime;
+      if (!hopeDate || !startTime || !endTime) {
+        return;
+      }
+      const uniqueId = 'S-' + new Date().getTime() + Math.floor(Math.random() * 1000);
+      const newRow = [
+        applyDate,
+        internName,
+        hopeDate,
+        startTime,
+        endTime,
+        status,
+        '', // G: 確定者名
+        '', // H: 変更履歴
+        uniqueId, // I: シフトID
+      ];
+      sheet.appendRow(newRow);
+      shifts.push({
+        shiftId: uniqueId,
+        applyDate: Utilities.formatDate(applyDate, 'JST', 'yyyy/MM/dd'),
+        internName: internName,
+        hopeDate: Utilities.formatDate(hopeDate, 'JST', 'yyyy/MM/dd'),
+        startTime: startTime,
+        endTime: endTime,
+        status: status,
+      });
+    });
+
+    SpreadsheetApp.flush();
+
+    const managerEmails = getEmailsByRoles(['採用担当', 'Dooox'], userSheet);
+    Logger.log('N-01 notify managers (batch): ' + managerEmails.join(','));
+    if (managerEmails.length > 0 && shifts.length > 0) {
+      const subject = '【シフト申請（一括）】' + internName;
+      const lines = shifts.map(s => `${s.hopeDate} ${s.startTime}〜${s.endTime}`);
+      const body =
+        'シフト申請が一括で提出されました。\n\n' +
+        '氏名: ' +
+        internName +
+        '\n申請数: ' +
+        shifts.length +
+        '件\n\n' +
+        lines.join('\n');
+      sendMailSafe({ to: managerEmails.join(','), subject: subject, body: body });
+    }
+
+    return { message: 'シフト希望を一括申請しました。', shifts: shifts };
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('申請に失敗しました：' + e.message);
+  }
+}
+
 // ----------------------------------------
 // サーバーサイド関数 (日報入力)
 // ----------------------------------------
@@ -1408,6 +1490,28 @@ function rejectShift(rowNumber, shiftId, approverName) {
 }
 
 function updateShiftStatus(ss, sheet, rowNumber, shiftId, newStatus, updaterName, actionType) {
+  return updateShiftStatusInternal(
+    ss,
+    sheet,
+    rowNumber,
+    shiftId,
+    newStatus,
+    updaterName,
+    actionType,
+    true
+  );
+}
+
+function updateShiftStatusInternal(
+  ss,
+  sheet,
+  rowNumber,
+  shiftId,
+  newStatus,
+  updaterName,
+  actionType,
+  sendEmail
+) {
   try {
     if (rowNumber > sheet.getLastRow() || rowNumber < 2) {
       throw new Error('指定されたシフトの行が見つかりません。');
@@ -1429,7 +1533,7 @@ function updateShiftStatus(ss, sheet, rowNumber, shiftId, newStatus, updaterName
       : newHistoryEntry;
     sheet.getRange(rowNumber, 8).setValue(updatedHistory);
 
-    if (newStatus === '確定') {
+    if (sendEmail && newStatus === '確定') {
       const userSheet = ss.getSheetByName(SHEET_USER);
       const internName = sheet.getRange(rowNumber, 2).getValue();
       const internEmails = getEmailByName(internName, userSheet);
@@ -1458,10 +1562,114 @@ function updateShiftStatus(ss, sheet, rowNumber, shiftId, newStatus, updaterName
       }
     }
 
-    return `シフトを${actionType}しました。`;
+    return {
+      message: `シフトを${actionType}しました。`,
+      shift: {
+        shiftId: shiftId,
+        internName: sheet.getRange(rowNumber, 2).getValue(),
+        hopeDate: Utilities.formatDate(
+          new Date(sheet.getRange(rowNumber, 3).getValue()),
+          'JST',
+          'yyyy/MM/dd'
+        ),
+        startTime:
+          sheet.getRange(rowNumber, 4).getValue() instanceof Date
+            ? Utilities.formatDate(sheet.getRange(rowNumber, 4).getValue(), 'JST', 'HH:mm')
+            : sheet.getRange(rowNumber, 4).getValue(),
+        endTime:
+          sheet.getRange(rowNumber, 5).getValue() instanceof Date
+            ? Utilities.formatDate(sheet.getRange(rowNumber, 5).getValue(), 'JST', 'HH:mm')
+            : sheet.getRange(rowNumber, 5).getValue(),
+        status: newStatus,
+      },
+    };
   } catch (e) {
     Logger.log(e);
     throw new Error(`シフトの${actionType}に失敗しました: ${e.message}`);
+  }
+}
+
+function updateShiftsBatch(items, approverName) {
+  try {
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('通知対象がありません。');
+    }
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(SHEET_SHIFT);
+    const userSheet = ss.getSheetByName(SHEET_USER);
+    const updated = [];
+    const byInternApprove = {};
+    const byInternReject = {};
+
+    items.forEach(item => {
+      const decision = item.decision;
+      const newStatus = decision === 'reject' ? '棄却' : '確定';
+      const actionType = decision === 'reject' ? '棄却' : '承認';
+      const result = updateShiftStatusInternal(
+        ss,
+        sheet,
+        item.rowNumber,
+        item.shiftId,
+        newStatus,
+        approverName,
+        actionType,
+        false
+      );
+      updated.push(result.shift);
+      const name = result.shift.internName;
+      if (decision === 'reject') {
+        if (!byInternReject[name]) byInternReject[name] = [];
+        byInternReject[name].push(result.shift);
+      } else {
+        if (!byInternApprove[name]) byInternApprove[name] = [];
+        byInternApprove[name].push(result.shift);
+      }
+    });
+
+    Object.keys(byInternApprove).forEach(internName => {
+      const emails = getEmailByName(internName, userSheet);
+      if (!emails || emails.length === 0) return;
+      const subject = '【シフト確定（一括）】' + internName;
+      const lines = byInternApprove[internName].map(
+        s => `${s.hopeDate} ${s.startTime}〜${s.endTime}`
+      );
+      const body =
+        'シフトが承認され確定しました。\n\n' +
+        '氏名: ' +
+        internName +
+        '\n件数: ' +
+        byInternApprove[internName].length +
+        '件\n\n' +
+        lines.join('\n') +
+        '\n承認者: ' +
+        approverName;
+      sendMailSafe({ to: emails.join(','), subject: subject, body: body });
+    });
+
+    Object.keys(byInternReject).forEach(internName => {
+      const emails = getEmailByName(internName, userSheet);
+      if (!emails || emails.length === 0) return;
+      const subject = '【シフト棄却（一括）】' + internName;
+      const lines = byInternReject[internName].map(
+        s => `${s.hopeDate} ${s.startTime}〜${s.endTime}`
+      );
+      const body =
+        'シフトが棄却されました。\n\n' +
+        '氏名: ' +
+        internName +
+        '\n件数: ' +
+        byInternReject[internName].length +
+        '件\n\n' +
+        lines.join('\n') +
+        '\n処理者: ' +
+        approverName;
+      sendMailSafe({ to: emails.join(','), subject: subject, body: body });
+    });
+
+    return { message: '通知しました。', updatedShifts: updated };
+  } catch (e) {
+    Logger.log(e);
+    throw new Error('通知に失敗しました: ' + e.message);
   }
 }
 

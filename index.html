@@ -535,9 +535,25 @@
             <select id="end-minute" style="width: 50%"></select>
           </div>
         </div>
-        <div><button type="submit" id="submit-button">申請する</button></div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap">
+          <button type="button" id="add-shift-button">追加</button>
+          <button type="submit" id="submit-button">一括申請する</button>
+        </div>
       </form>
       <div id="status-message"></div>
+      <div id="pending-shifts" style="margin-top: 15px">
+        <h3>申請予定リスト</h3>
+        <table id="pending-shifts-table">
+          <thead>
+            <tr>
+              <th>希望日</th>
+              <th>希望時間</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="pending-shifts-tbody"></tbody>
+        </table>
+      </div>
 
       <hr style="margin: 30px 0" />
 
@@ -554,6 +570,7 @@
             ＋ 新規シフト作成
           </button>
           <button id="admin-refresh-btn" style="margin-left: 10px">読み込み</button>
+          <button id="admin-notify-btn" style="margin-left: 10px">通知</button>
           <label for="admin-month-selector">月を選択:</label>
           <select id="admin-month-selector"></select>
           <div id="admin-status-filters" style="margin-top: 10px">
@@ -567,6 +584,7 @@
         <table id="admin-shifts-table">
           <thead>
             <tr>
+              <th>判定</th>
               <th>申請日</th>
               <th>氏名</th>
               <th>希望日</th>
@@ -2129,6 +2147,8 @@
           .withSuccessHandler(onUsersLoaded)
           .withFailureHandler(onFailure)
           .getUsers();
+
+        renderPendingShifts();
       });
 
       function onUsersLoaded(response) {
@@ -2449,6 +2469,14 @@
         handleDailyReportManualRefresh();
       });
 
+      document.getElementById('add-shift-button').addEventListener('click', () => {
+        handleAddShift();
+      });
+
+      document.getElementById('admin-notify-btn').addEventListener('click', () => {
+        handleBulkNotify();
+      });
+
       function handleAdminCreateShiftSubmit(formObject) {
         const formData = {
           internName: formObject.internName.value,
@@ -2524,24 +2552,63 @@
 
         filteredShifts.forEach(shift => {
           const tr = document.createElement('tr');
-          let actionButtons = '';
+          let decisionCell = '';
           if (shift.status === '希望中') {
-            actionButtons = `
-              <button class="approve-btn" onclick="handleApprove(${shift.rowNumber}, '${shift.shiftId}')">承認</button>
-              <button class="reject-btn" onclick="handleReject(${shift.rowNumber}, '${shift.shiftId}')">棄却</button>
+            decisionCell = `
+              <label><input type="radio" name="decision-${shift.shiftId}" class="bulk-decision" data-row="${shift.rowNumber}" data-id="${shift.shiftId}" value="approve"> 承認</label>
+              <label style="margin-left: 8px"><input type="radio" name="decision-${shift.shiftId}" class="bulk-decision" data-row="${shift.rowNumber}" data-id="${shift.shiftId}" value="reject"> 棄却</label>
             `;
           }
 
           tr.innerHTML = `
+            <td>${decisionCell}</td>
             <td>${formatDateJP(shift.applyDate)}</td>
             <td>${shift.internName}</td>
             <td>${formatDateJP(shift.hopeDate)}</td>
             <td>${shift.startTime} ~ ${shift.endTime}</td>
             <td>${shift.status}</td>
-            <td>${actionButtons}</td>
+            <td></td>
           `;
           tbody.appendChild(tr);
         });
+      }
+
+      function handleBulkNotify() {
+        const decisions = document.querySelectorAll('.bulk-decision:checked');
+        if (decisions.length === 0) {
+          alert('承認または棄却を選択してください。');
+          return;
+        }
+        if (!confirm(`${decisions.length}件の通知を送信しますか？`)) {
+          return;
+        }
+        const items = Array.from(decisions).map(cb => ({
+          rowNumber: Number(cb.dataset.row),
+          shiftId: cb.dataset.id,
+          decision: cb.value,
+        }));
+        showGlobalLoader('通知中...');
+        google.script.run
+          .withSuccessHandler(function (response) {
+            hideGlobalLoader();
+            alert(response.message || '通知しました。');
+            const updated = response.updatedShifts || [];
+            updated.forEach(shift => {
+              const target = (APP_DATA.allShifts || []).find(s => s.shiftId === shift.shiftId);
+              if (target) {
+                target.status = shift.status;
+              }
+              if (shift.status === '確定') {
+                addShiftEventToCalendar(shift);
+              }
+            });
+            renderAdminShifts();
+          })
+          .withFailureHandler(function (error) {
+            hideGlobalLoader();
+            alert('通知に失敗しました: ' + error.message);
+          })
+          .updateShiftsBatch(items, APP_DATA.userInfo.name);
       }
 
       function handleApprove(rowNumber, shiftId) {
@@ -2549,7 +2616,8 @@
           return;
         }
         google.script.run
-          .withSuccessHandler(function (message) {
+          .withSuccessHandler(function (response) {
+            const message = response && response.message ? response.message : response;
             alert(message);
             const allShifts = APP_DATA.allShifts || [];
             const target = allShifts.find(shift => shift.shiftId === shiftId);
@@ -2570,7 +2638,8 @@
           return;
         }
         google.script.run
-          .withSuccessHandler(function (message) {
+          .withSuccessHandler(function (response) {
+            const message = response && response.message ? response.message : response;
             alert(message);
             const allShifts = APP_DATA.allShifts || [];
             const target = allShifts.find(shift => shift.shiftId === shiftId);
@@ -2588,86 +2657,201 @@
       // ------------------------------------
       // シフト申請フォーム
       // ------------------------------------
-      function handleFormSubmit(formObject) {
+      let pendingShiftRequests = [];
+
+      function renderPendingShifts() {
+        const tbody = document.getElementById('pending-shifts-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (pendingShiftRequests.length === 0) {
+          return;
+        }
+        pendingShiftRequests.forEach((item, index) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${formatDateJP(item.hopeDate.replace(/-/g, '/'))}</td>
+            <td>${item.startTime} ~ ${item.endTime}</td>
+            <td><button type="button" onclick="removePendingShift(${index})">削除</button></td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      function removePendingShift(index) {
+        pendingShiftRequests.splice(index, 1);
+        renderPendingShifts();
+      }
+
+      function handleAddShift() {
         const startHour = document.getElementById('start-hour').value;
         const startMinute = document.getElementById('start-minute').value;
         const endHour = document.getElementById('end-hour').value;
         const endMinute = document.getElementById('end-minute').value;
-
-        const shiftIdInput = document.getElementById('modify-shift-id');
-        const isModification = shiftIdInput && shiftIdInput.value;
-
         const formData = {
-          hopeDate: getDateFromSelectors('hope-date'), // MODIFIED
+          hopeDate: getDateFromSelectors('hope-date'),
           startTime: `${startHour}:${startMinute}`,
           endTime: `${endHour}:${endMinute}`,
         };
-
-        if (isModification) {
-          formData.shiftId = shiftIdInput.value;
-        }
-
         if (formData.startTime >= formData.endTime) {
           alert('終了時刻は開始時刻より後に設定してください。');
           return;
         }
+        const shiftIdInput = document.getElementById('modify-shift-id');
+        if (shiftIdInput) {
+          shiftIdInput.remove();
+          document.getElementById('submit-button').innerText = '一括申請する';
+        }
+        pendingShiftRequests.push(formData);
+        renderPendingShifts();
+      }
 
-        document.getElementById('submit-button').disabled = true;
-        document.getElementById('status-message').innerText = '送信中...';
+      function handleFormSubmit(formObject) {
+        try {
+          const startHour = document.getElementById('start-hour').value;
+          const startMinute = document.getElementById('start-minute').value;
+          const endHour = document.getElementById('end-hour').value;
+          const endMinute = document.getElementById('end-minute').value;
 
-        const onSubmissionSuccess = response => {
-          const message = response && response.message ? response.message : response;
-          // 1. Show success message and reset the form
-          document.getElementById('status-message').innerText = message;
-          document.getElementById('submit-button').disabled = false;
-          document.getElementById('shift-form').reset();
+          const shiftIdInput = document.getElementById('modify-shift-id');
+          const isModification = shiftIdInput && shiftIdInput.value;
+          const hasBatchItems = pendingShiftRequests.length > 0;
 
-          // Reset date selectors to today
-          populateDateSelectors('hope-date');
+          const formData = {
+            hopeDate: getDateFromSelectors('hope-date'),
+            startTime: `${startHour}:${startMinute}`,
+            endTime: `${endHour}:${endMinute}`,
+          };
 
           if (isModification) {
-            shiftIdInput.value = '';
-            document.getElementById('submit-button').innerText = '申請する';
+            formData.shiftId = shiftIdInput.value;
           }
 
-          if (response && response.shift) {
-            APP_DATA.myShiftRequests = APP_DATA.myShiftRequests || [];
-            const index = APP_DATA.myShiftRequests.findIndex(
-              req => req.shiftId === response.shift.shiftId
-            );
-            if (index >= 0) {
-              APP_DATA.myShiftRequests[index] = {
-                ...APP_DATA.myShiftRequests[index],
-                ...response.shift,
-              };
+          if (formData.startTime >= formData.endTime) {
+            alert('終了時刻は開始時刻より後に設定してください。');
+            return;
+          }
+
+          if (!isModification || hasBatchItems) {
+            if (pendingShiftRequests.length === 0) {
+              alert('申請予定がありません。「追加」でリストに入れてください。');
+              return;
+            }
+          }
+
+          document.getElementById('submit-button').disabled = true;
+          document.getElementById('status-message').innerText = '送信中...';
+
+          console.log('batch size:', pendingShiftRequests.length);
+          if (!google || !google.script || !google.script.run) {
+            throw new Error('google.script.run が見つかりません');
+          }
+
+          let timeoutId = null;
+          const clearTimeoutIfAny = () => {
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+              timeoutId = null;
+            }
+          };
+
+          const onSubmissionSuccess = response => {
+            clearTimeoutIfAny();
+            const message = response && response.message ? response.message : response;
+            document.getElementById('status-message').innerText = message;
+            document.getElementById('submit-button').disabled = false;
+            document.getElementById('shift-form').reset();
+
+            populateDateSelectors('hope-date');
+
+            if (isModification && shiftIdInput) {
+              shiftIdInput.value = '';
+              document.getElementById('submit-button').innerText = '一括申請する';
+            }
+
+            const shifts =
+              response && response.shifts
+                ? response.shifts
+                : response && response.shift
+                  ? [response.shift]
+                  : [];
+            if (shifts.length > 0) {
+              APP_DATA.myShiftRequests = APP_DATA.myShiftRequests || [];
+              shifts.forEach(shift => {
+                const index = APP_DATA.myShiftRequests.findIndex(
+                  req => req.shiftId === shift.shiftId
+                );
+                if (index >= 0) {
+                  APP_DATA.myShiftRequests[index] = {
+                    ...APP_DATA.myShiftRequests[index],
+                    ...shift,
+                  };
+                } else {
+                  APP_DATA.myShiftRequests.push(shift);
+                }
+                if (APP_DATA.allShifts) {
+                  const adminIndex = APP_DATA.allShifts.findIndex(s => s.shiftId === shift.shiftId);
+                  if (adminIndex >= 0) {
+                    APP_DATA.allShifts[adminIndex] = {
+                      ...APP_DATA.allShifts[adminIndex],
+                      ...shift,
+                    };
+                  } else {
+                    APP_DATA.allShifts.push(shift);
+                  }
+                }
+              });
+              renderMyShiftRequests(APP_DATA.myShiftRequests);
+              if (APP_DATA.allShifts) renderAdminShifts();
+            }
+            pendingShiftRequests = [];
+            renderPendingShifts();
+          };
+
+          const runner = google.script.run
+            .withSuccessHandler(onSubmissionSuccess)
+            .withFailureHandler(function (error) {
+              clearTimeoutIfAny();
+              document.getElementById('status-message').innerText =
+                'エラー: ' + (error && error.message ? error.message : '送信に失敗しました。');
+              document.getElementById('submit-button').disabled = false;
+              console.error(error);
+            });
+
+          timeoutId = setTimeout(() => {
+            document.getElementById('status-message').innerText =
+              'タイムアウトしました。通信状況を確認して再度お試しください。';
+            document.getElementById('submit-button').disabled = false;
+          }, 15000);
+
+          if (pendingShiftRequests.length > 0) {
+            if (typeof runner.submitShiftRequestsBatch === 'function') {
+              runner.submitShiftRequestsBatch(pendingShiftRequests, APP_DATA.userInfo.name);
+            } else if (typeof google.script.run.submitShiftRequestsBatch === 'function') {
+              google.script.run
+                .withSuccessHandler(onSubmissionSuccess)
+                .withFailureHandler(function (error) {
+                  clearTimeoutIfAny();
+                  document.getElementById('status-message').innerText =
+                    'エラー: ' + (error && error.message ? error.message : '送信に失敗しました。');
+                  document.getElementById('submit-button').disabled = false;
+                  console.error(error);
+                })
+                .submitShiftRequestsBatch(pendingShiftRequests, APP_DATA.userInfo.name);
             } else {
-              APP_DATA.myShiftRequests.push(response.shift);
+              clearTimeoutIfAny();
+              document.getElementById('status-message').innerText =
+                'エラー: バッチ申請関数が見つかりません。デプロイを更新してください。';
+              document.getElementById('submit-button').disabled = false;
             }
-            renderMyShiftRequests(APP_DATA.myShiftRequests);
-
-            if (APP_DATA.allShifts) {
-              const adminIndex = APP_DATA.allShifts.findIndex(
-                shift => shift.shiftId === response.shift.shiftId
-              );
-              if (adminIndex >= 0) {
-                APP_DATA.allShifts[adminIndex] = {
-                  ...APP_DATA.allShifts[adminIndex],
-                  ...response.shift,
-                };
-              } else {
-                APP_DATA.allShifts.push(response.shift);
-              }
-              renderAdminShifts();
-            }
+          } else {
+            runner.submitShiftRequest(formData, APP_DATA.userInfo.name);
           }
-        };
-
-        google.script.run
-          .withSuccessHandler(onSubmissionSuccess)
-          .withFailureHandler(function (error) {
-            onFailure(error, 'status-message', 'submit-button');
-          })
-          .submitShiftRequest(formData, APP_DATA.userInfo.name);
+        } catch (error) {
+          document.getElementById('status-message').innerText =
+            'エラー: ' + (error && error.message ? error.message : '送信に失敗しました。');
+          document.getElementById('submit-button').disabled = false;
+          console.error(error);
+        }
       }
 
       // ------------------------------------

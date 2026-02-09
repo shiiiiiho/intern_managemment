@@ -35,6 +35,8 @@ export default [
         require: 'readonly',
         exports: 'readonly',
         Buffer: 'readonly',
+        MailApp: 'readonly',
+        Session: 'readonly',
         SpreadsheetApp: 'readonly',
         Utilities: 'readonly',
         HtmlService: 'readonly',
